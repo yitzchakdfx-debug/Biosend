@@ -1,0 +1,40 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Database and Locks
+*.db
+*.lock
+app.lock
+
+# App Logs and Temporary Files
+*.log
+logs/
+temp/
+
+# Test Results and Exports
+src/data/results/
+*.csv
+*.json
+*.txt
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Icons and Assets (Exclude specific local icons if needed)
+# src/ui/assets/icons/BirdAppIcon.png

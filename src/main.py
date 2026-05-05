@@ -43,12 +43,18 @@ def main() -> int:
         return 1
 
     try:
-        login = LoginDialog()
-        if login.exec():
+        while True:
+            login = LoginDialog()
+            if login.exec() != LoginDialog.DialogCode.Accepted:
+                break
+
             user_info = login.get_user_info()
             window = MainWindow(user_info)
             window.show()
-            return app.exec()
+            app.exec()
+            if bool(window.property("logout_requested")):
+                continue
+            break
         return 0
     finally:
         lock.release()

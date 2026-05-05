@@ -103,6 +103,7 @@ class MainWindow(QMainWindow):
         self.btn_toggle_theme.setIcon(self._icon(theme_name, theme_fallback))
         self.btn_load_script.setIcon(self._icon("folder", SP.SP_DirOpenIcon))
         self.btn_edit_script.setIcon(self._icon("edit", SP.SP_FileDialogDetailedView))
+        self.btn_logout.setIcon(self._icon("logout", SP.SP_ArrowBack))
         self.btn_exit.setIcon(self._icon("power", SP.SP_DialogCloseButton))
 
     def show_about_dialog(self) -> None:
@@ -384,6 +385,10 @@ class MainWindow(QMainWindow):
         ribbon.addWidget(self.label_active_script)
 
         ribbon.addStretch()
+
+        self.btn_logout = self._make_ribbon_button("btn_logout", "Log Out")
+        self.btn_logout.clicked.connect(self.logout)
+        ribbon.addWidget(self.btn_logout)
 
         self.btn_exit = self._make_ribbon_button("btn_exit", "Exit")
         self.btn_exit.clicked.connect(self.close)
@@ -758,6 +763,19 @@ class MainWindow(QMainWindow):
         if self.test_thread and self.test_thread.isRunning():
             self.test_thread.stop()
             self.append_trace("Stopping sequence...")
+
+    def logout(self) -> None:
+        """Closes the main window and signals the application to restart the login flow."""
+        confirm = QMessageBox.question(
+            self,
+            "Log Out",
+            "Are you sure you want to log out and switch users?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self.setProperty("logout_requested", True)
+            self.close()
 
     def update_results_table(self, test_name: str, result: TestResultPayload) -> None:
         row = self.results_table.rowCount()
