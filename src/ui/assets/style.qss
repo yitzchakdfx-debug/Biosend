@@ -1,0 +1,25 @@
+/* DFX ATE — global Qt stylesheet */
+
+QMainWindow {
+    background-color: #1e1e1e;
+    color: #e0e0e0;
+}
+
+#titleLabel {
+    font-size: 18px;
+    font-weight: 600;
+    color: #ffffff;
+    padding: 8px;
+}
+
+#statusPanel {
+    background-color: #2d2d2d;
+    border: 1px solid #404040;
+    border-radius: 4px;
+    padding: 8px;
+}
+
+#statusPanel QLabel {
+    color: #c0c0c0;
+    font-size: 12px;
+}

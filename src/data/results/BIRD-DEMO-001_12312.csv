@@ -1,0 +1,10 @@
+Title: DFX Tester - Test Report
+Part Number: BIRD-DEMO-001
+Serial Number: 12312
+Date: 2026-05-05 14:57:37
+User: test (Operator)
+-------------------
+Test Name,Value,Result
+Power Supply Init,-,PASS
+5V Output Voltage,5.032 V,PASS
+Cleanup,-,PASS
