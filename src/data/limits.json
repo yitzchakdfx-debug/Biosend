@@ -1,6 +1,0 @@
-{
-  "5.4 LINE/LOAD VOLTAGE": {"min": 4.95, "max": 5.15, "unit": "V"},
-  "5.4 LINE/LOAD RIPPLE": {"min": 0.0, "max": 50.0, "unit": "mV"},
-  "5.5 OUTPUTS OVERLOAD": {"min": 2.0, "max": 5.0, "unit": "A"},
-  "5.6 STEP LOAD": {"min": 0.0, "max": 100.0, "unit": "%"}
-}

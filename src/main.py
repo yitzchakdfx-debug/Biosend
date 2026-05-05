@@ -50,9 +50,10 @@ def main() -> int:
 
             user_info = login.get_user_info()
             window = MainWindow(user_info)
+            app.setProperty("logout_requested", False)
             window.show()
             app.exec()
-            if bool(window.property("logout_requested")):
+            if bool(app.property("logout_requested")):
                 continue
             break
         return 0

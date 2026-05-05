@@ -149,6 +149,7 @@ QSplitter::handle:vertical { height: 4px; }
 QToolButton#btn_toggle_theme,
 QToolButton#btn_load_script,
 QToolButton#btn_edit_script,
+QToolButton#btn_logout,
 QToolButton#btn_exit {
     background-color: transparent;
     border: 1px solid transparent;
@@ -158,7 +159,8 @@ QToolButton#btn_exit {
 }
 QToolButton#btn_toggle_theme:hover,
 QToolButton#btn_load_script:hover,
-QToolButton#btn_edit_script:hover {
+QToolButton#btn_edit_script:hover,
+QToolButton#btn_logout:hover {
     border: 1px solid #3b82f6;
     background-color: #e2e8f0;
 }

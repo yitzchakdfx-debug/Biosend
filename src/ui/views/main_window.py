@@ -12,6 +12,7 @@ from pathlib import Path
 from PySide6.QtCore import QSize, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QFileDialog,
     QHBoxLayout,
@@ -775,6 +776,9 @@ class MainWindow(QMainWindow):
         if confirm == QMessageBox.StandardButton.Yes:
             self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self.setProperty("logout_requested", True)
+            app = QApplication.instance()
+            if app is not None:
+                app.setProperty("logout_requested", True)
             self.close()
 
     def update_results_table(self, test_name: str, result: TestResultPayload) -> None:
