@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # DFX_ate
 
 A Windows desktop ATE (Automated Test Equipment) controller built on PySide6.
@@ -32,3 +33,6 @@ code on every commit**.
 
 If a `src/` change is not accompanied by a `DOC/` update in the same
 commit, it requires a written justification in the PR description.
+=======
+# DFX_ate
+>>>>>>> b34894bd7bea641d29894338c10760684354d4e1
