@@ -178,3 +178,29 @@ QScrollBar:horizontal { background: #f0f4f8; height: 12px; border: none; }
 QScrollBar::handle:horizontal { background: #cbd5e1; border-radius: 6px; min-width: 24px; }
 QScrollBar::handle:horizontal:hover { background: #94a3b8; }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+
+/* Live instrument monitor (optional panel) */
+QWidget#instrument_panel {
+    background-color: #e2e8f0;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    padding: 6px;
+}
+QLabel#instrument_panel_title {
+    color: #64748b;
+    font-size: 10pt;
+}
+QFrame#readout_row {
+    background-color: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+QLabel#readout_value_V,
+QLabel#readout_value_A {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 18pt;
+    font-weight: bold;
+}
+QLabel#readout_value_V { color: #0284c7; }
+QLabel#readout_value_A { color: #16a34a; }

@@ -34,12 +34,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from config import SHOW_LIVE_MONITOR
 from logic.models import TestResultPayload
+from logic.monitor_engine import MonitorThread
 from logic.script_manager import ScriptManager, ScriptParseError
 from logic.test_engine import TestRunnerThread
 from ui.views.script_editor import ScriptEditorDialog
 from ui.views.user_management_dialog import UserManagementDialog
 from ui.widgets.control_panel import ControlPanelWidget
+from ui.widgets.instrument_panel import InstrumentPanelWidget
 from version import __version__
 
 
@@ -74,6 +77,10 @@ class MainWindow(QMainWindow):
         self._trace_history: list[dict] = []
         self._part_number_user_edited = False
         self._setup_ui()
+        if SHOW_LIVE_MONITOR:
+            self.monitor_thread = MonitorThread(parent=self)
+            self.monitor_thread.values_updated.connect(self.instrument_panel.update_values)
+            self.monitor_thread.start()
         self._apply_theme_file()
         self._update_icons(self.is_dark_mode)
         self._apply_role_permissions()
@@ -407,8 +414,17 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
         )
         self.test_list.setItemAlignment(Qt.AlignmentFlag.AlignTop)
-        self.test_list.setMinimumWidth(200)
-        self.test_list.setMaximumWidth(280)
+
+        self.left_sidebar = QWidget()
+        self.left_sidebar.setMinimumWidth(200)
+        self.left_sidebar.setMaximumWidth(280)
+        sidebar_layout = QVBoxLayout(self.left_sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(8)
+        sidebar_layout.addWidget(self.test_list, stretch=1)
+        if SHOW_LIVE_MONITOR:
+            self.instrument_panel = InstrumentPanelWidget()
+            sidebar_layout.addWidget(self.instrument_panel, stretch=0)
 
         results_table_container = QWidget()
         center_layout = QVBoxLayout(results_table_container)
@@ -508,7 +524,7 @@ class MainWindow(QMainWindow):
             self._mark_part_number_user_edited
         )
 
-        main_row.addWidget(self.test_list)
+        main_row.addWidget(self.left_sidebar)
         main_row.addWidget(v_splitter, stretch=1)
         main_row.addWidget(self.control_panel)
 
@@ -774,12 +790,19 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if confirm == QMessageBox.StandardButton.Yes:
+            if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
+                self.monitor_thread.stop()
             self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self.setProperty("logout_requested", True)
             app = QApplication.instance()
             if app is not None:
                 app.setProperty("logout_requested", True)
             self.close()
+
+    def closeEvent(self, event) -> None:
+        if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
+            self.monitor_thread.stop()
+        super().closeEvent(event)
 
     def update_results_table(self, test_name: str, result: TestResultPayload) -> None:
         row = self.results_table.rowCount()
