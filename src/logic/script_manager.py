@@ -228,6 +228,37 @@ class ScriptManager:
             step.unit = " ".join(tokens[1:])
             return
 
+    def serialize_ordered_steps(
+        self, steps: list[TestStep], *, metadata: dict[str, str] | None = None
+    ) -> str:
+        """Build `.tst` text from ordered executable steps for version archiving."""
+        lines: list[str] = []
+        if metadata:
+            pn = metadata.get("part_number", "").strip()
+            if pn:
+                lines.append(f"# PartNum: {pn}")
+                lines.append("")
+        for step in steps:
+            lines.append(f":{step.name}")
+            if step.is_critical:
+                lines.append("Critical")
+            if step.retry_count > 0:
+                lines.append(f"Retry {step.retry_count}")
+            if step.has_limits:
+                mn = step.min_val
+                mx = step.max_val
+                assert mn is not None and mx is not None
+                lines.append(f"Limits {mn:g} {mx:g}")
+            if step.unit:
+                lines.append(f"Unit {step.unit}")
+            for cmd in step.commands:
+                name = str(cmd["cmd"])
+                tail = " ".join(str(a) for a in cmd["args"])
+                lines.append(f"{name} {tail}".strip())
+            lines.append("")
+        body = "\n".join(lines).rstrip()
+        return body + "\n" if body else "\n"
+
     def _validate_suffix(self, path: Path) -> None:
         if path.suffix.lower() != self.SCRIPT_SUFFIX:
             raise ValueError(

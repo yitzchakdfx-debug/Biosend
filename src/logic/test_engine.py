@@ -20,6 +20,7 @@ from drivers.mock_hardware import MockHardware
 from logic.database_manager import DatabaseManager
 from logic.models import TestResultPayload, TestRunRecord, TestStep
 from logic.script_manager import ScriptManager, ScriptParseError
+from logic.secure_logger import get_secure_logger
 
 
 class TestRunnerThread(QThread):
@@ -41,12 +42,18 @@ class TestRunnerThread(QThread):
         loop_count: int = 1,
         stop_on_fail: bool = False,
         operator: str = "",
+        tester_name: str = "",
+        employee_id: str = "",
+        uut_type: str = "",
         part_number: str = "",
         serial_number: str = "",
         script_manager: ScriptManager | None = None,
+        start_time: datetime | None = None,
+        logical_script_name: str = "",
     ) -> None:
         super().__init__()
         self._script_path = Path(script_path)
+        self._logical_script_name = logical_script_name.strip() or self._script_path.stem
         self._selected_names = set(selected_names)
         self._loop_count = max(1, loop_count)
         self._stop_on_fail = stop_on_fail
@@ -54,13 +61,39 @@ class TestRunnerThread(QThread):
         self._hw = MockHardware()
         self._stop_requested = False
         self._prompt_event: Event = Event()
+        self._pause_event: Event = Event()
+        self._pause_event.set()  # set = running; clear = paused
         self._db = DatabaseManager()
+        try:
+            self._secure_log = get_secure_logger()
+        except Exception:
+            self._secure_log = None
+        self.tester_name = tester_name.strip() or operator.strip()
+        self.employee_id = employee_id.strip()
+        self.uut_type = uut_type.strip()
+        self._start_dt = start_time or datetime.now()
         self._run_record = TestRunRecord(
-            operator=operator,
+            operator=operator.strip() or self.tester_name,
             part_number=part_number,
             serial_number=serial_number,
             overall_passed=True,
+            start_time=self._start_dt,
         )
+
+    def _emit_log(self, category: str, msg: str) -> None:
+        self.log_msg.emit(msg)
+        if self._secure_log is not None:
+            try:
+                self._secure_log.log(
+                    "trace",
+                    {
+                        "category": category,
+                        "message": msg,
+                        "script": self._logical_script_name,
+                    },
+                )
+            except Exception:
+                pass
 
     def run(self) -> None:
         self.progress_total.emit(0)
@@ -73,19 +106,20 @@ class TestRunnerThread(QThread):
             try:
                 all_steps = self._script_manager.load_script(self._script_path)
             except ScriptParseError as exc:
-                self.log_msg.emit(
-                    f"Script load failed at line {exc.line_no}: {exc.msg}"
+                self._emit_log(
+                    "error",
+                    f"Script load failed at line {exc.line_no}: {exc.msg}",
                 )
                 overall_passed = False
                 return
             except (OSError, ValueError) as exc:
-                self.log_msg.emit(f"Script load failed: {exc}")
+                self._emit_log("error", f"Script load failed: {exc}")
                 overall_passed = False
                 return
 
             steps = [s for s in all_steps if s.name in self._selected_names]
             if not steps:
-                self.log_msg.emit("No steps selected to run.")
+                self._emit_log("info", "No steps selected to run.")
                 return
 
             total_steps = len(steps) * self._loop_count
@@ -94,18 +128,23 @@ class TestRunnerThread(QThread):
 
             for _loop in range(self._loop_count):
                 if self._stop_requested:
-                    self.log_msg.emit("Test execution aborted by user.")
+                    self._emit_log("info", "Test execution aborted by user.")
                     break
 
                 for step in steps:
+                    self._pause_event.wait()
                     if self._stop_requested:
-                        self.log_msg.emit("Test execution aborted by user.")
+                        self._emit_log("info", "Test execution aborted by user.")
                         abort_all_loops = True
                         break
 
                     self.current_test.emit(step.name)
                     self.progress_test.emit(0)
-                    self.log_msg.emit(f"Executing: {step.name}...")
+                    self._emit_log(
+                        "cmd",
+                        f"Executing: {step.name}... "
+                        f"[Script: {self._logical_script_name}]",
+                    )
 
                     attempts_total = step.retry_count + 1
                     passed = False
@@ -116,9 +155,10 @@ class TestRunnerThread(QThread):
                         passed, value = self._run_step(step)
                         if passed or attempt == attempts_total:
                             break
-                        self.log_msg.emit(
+                        self._emit_log(
+                            "info",
                             f"{step.name}: attempt {attempt}/{attempts_total} "
-                            "failed, retrying..."
+                            "failed, retrying...",
                         )
 
                     if not passed:
@@ -136,6 +176,24 @@ class TestRunnerThread(QThread):
                     self._run_record.results.append(
                         {"test_name": step.name, **dict(payload)}
                     )
+                    if self._secure_log is not None:
+                        try:
+                            self._secure_log.log(
+                                "test_result",
+                                {
+                                    "test_name": step.name,
+                                    "passed": passed,
+                                    "value": payload.get("value"),
+                                    "min": payload.get("min"),
+                                    "max": payload.get("max"),
+                                    "unit": payload.get("unit"),
+                                    "is_measurement": payload.get(
+                                        "is_measurement", True
+                                    ),
+                                },
+                            )
+                        except Exception:
+                            pass
 
                     self.progress_test.emit(100)
                     completed += 1
@@ -144,15 +202,17 @@ class TestRunnerThread(QThread):
                     )
 
                     if step.is_critical and not passed:
-                        self.log_msg.emit(
-                            f"CRITICAL ABORT: {step.name} failed; halting sequence."
+                        self._emit_log(
+                            "error",
+                            f"CRITICAL ABORT: {step.name} failed; halting sequence.",
                         )
                         abort_all_loops = True
                         break
 
                     if self._stop_on_fail and not passed:
-                        self.log_msg.emit(
-                            f"Stop on fail: {step.name} failed; aborting remaining tests."
+                        self._emit_log(
+                            "info",
+                            f"Stop on fail: {step.name} failed; aborting remaining tests.",
                         )
                         abort_all_loops = True
                         break
@@ -166,9 +226,10 @@ class TestRunnerThread(QThread):
             try:
                 self._db.save_run(self._run_record)
             except Exception as exc:
-                self.log_msg.emit(f"ERROR: failed to save run to database: {exc!s}")
+                self._emit_log("error", f"ERROR: failed to save run to database: {exc!s}")
             self.current_test.emit("")
             self.progress_test.emit(0)
+            self._pause_event.set()
             self.finished.emit()
 
     def _run_step(self, step: TestStep) -> tuple[bool, float | None]:
@@ -184,8 +245,9 @@ class TestRunnerThread(QThread):
                 if result is not None:
                     last_measurement = result
             except Exception as exc:
-                self.log_msg.emit(
-                    f"ERROR in {step.name}: command {cmd['cmd']!r} raised: {exc!s}"
+                self._emit_log(
+                    "error",
+                    f"ERROR in {step.name}: command {cmd['cmd']!r} raised: {exc!s}",
                 )
                 return False, last_measurement
 
@@ -193,9 +255,10 @@ class TestRunnerThread(QThread):
 
         if step.has_limits:
             if last_measurement is None:
-                self.log_msg.emit(
+                self._emit_log(
+                    "error",
                     f"{step.name}: validation error - Limits set but no "
-                    "measurement command executed; marking FAIL."
+                    "measurement command executed; marking FAIL.",
                 )
                 return False, None
             assert step.min_val is not None and step.max_val is not None
@@ -236,6 +299,44 @@ class TestRunnerThread(QThread):
         """Unblock a thread parked on a `Prompt` (called by the UI thread)."""
         self._prompt_event.set()
 
+    def pause(self) -> None:
+        """Request pause between steps."""
+        self._pause_event.clear()
+
+    def resume_pause(self) -> None:
+        """Resume after Pause."""
+        self._pause_event.set()
+
     def stop(self) -> None:
         self._stop_requested = True
         self._prompt_event.set()
+        self._pause_event.set()
+
+    def report_snapshot(self) -> tuple[dict, list[dict]]:
+        """Header meta and result rows for PDF/CSV (after finished)."""
+        end = self._run_record.end_time or datetime.now()
+        meta = {
+            "overall_result": "PASS" if self._run_record.overall_passed else "FAIL",
+            "tester_name": self.tester_name,
+            "employee_id": self.employee_id,
+            "test_program_name": self._logical_script_name,
+            "uut_type": self.uut_type,
+            "part_number": self._run_record.part_number,
+            "serial_number": self._run_record.serial_number,
+            "start_time": self._run_record.start_time.isoformat(timespec="seconds"),
+            "end_time": end.isoformat(timespec="seconds"),
+        }
+        rows: list[dict] = []
+        for r in self._run_record.results:
+            rows.append(
+                {
+                    "test_name": r.get("test_name", ""),
+                    "value": r.get("value"),
+                    "min": r.get("min"),
+                    "max": r.get("max"),
+                    "unit": r.get("unit", ""),
+                    "passed": bool(r.get("passed")),
+                    "is_measurement": r.get("is_measurement", True),
+                }
+            )
+        return meta, rows

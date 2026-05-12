@@ -39,6 +39,7 @@ class ScriptEditorDialog(QDialog):
         self._script_manager = script_manager
         self._current_path: Path | None = None
         self._dirty: bool = False
+        self._virtual_edit: bool = False
 
         self.setWindowTitle("Test Script Editor")
         self.setMinimumSize(self._MIN_WIDTH, self._MIN_HEIGHT)
@@ -92,6 +93,7 @@ class ScriptEditorDialog(QDialog):
             QMessageBox.critical(self, "Failed to load", f"Could not open file:\n{exc}")
             return
 
+        self._virtual_edit = False
         self._current_path = path
         self._editor.blockSignals(True)
         self._editor.setPlainText(text)
@@ -102,7 +104,34 @@ class ScriptEditorDialog(QDialog):
         self.setWindowTitle(f"Test Script Editor - {path.name}")
         self._set_busy(False, f"Loaded {path.name}.")
 
+    def load_catalog_version(
+        self, test_name: str, version_name: str, content: str
+    ) -> None:
+        """Load raw script text from DB catalog; Save finishes without writing a file path."""
+        self._virtual_edit = True
+        self._current_path = None
+        self._editor.blockSignals(True)
+        self._editor.setPlainText(content)
+        self._editor.blockSignals(False)
+        self._dirty = False
+        self._path_label.setText(
+            f"<b>Catalog version:</b> {test_name} / {version_name}<br>"
+            "<i>Save creates a new catalog version only (this row is not overwritten).</i>"
+        )
+        self.setWindowTitle(
+            f"Test Script Editor — {test_name} ({version_name})"
+        )
+        self._status_label.setText("")
+
+    def result_text(self) -> str:
+        return self._editor.toPlainText()
+
     def save_file(self) -> None:
+        if self._virtual_edit:
+            self._dirty = False
+            self._set_busy(False, "")
+            self.accept()
+            return
         if self._current_path is None:
             QMessageBox.warning(self, "No file", "There is no file to save.")
             return
@@ -139,6 +168,9 @@ class ScriptEditorDialog(QDialog):
             self._dirty = True
             if self._current_path is not None:
                 self.setWindowTitle(f"Test Script Editor - {self._current_path.name} *")
+            elif self._virtual_edit:
+                t = self.windowTitle().replace(" *", "")
+                self.setWindowTitle(t + " *")
 
     def _set_busy(self, busy: bool, message: str = "") -> None:
         """Toggle controls and process pending GUI events to stay responsive."""

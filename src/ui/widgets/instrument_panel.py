@@ -34,10 +34,10 @@ class InstrumentPanelWidget(QWidget):
         self.setObjectName("instrument_panel")
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(6)
+        root.setContentsMargins(2, 2, 2, 2)
+        root.setSpacing(2)
 
-        title = QLabel("Live Monitor")
+        title = QLabel("Power Supply")
         title.setObjectName("instrument_panel_title")
         root.addWidget(title)
 
@@ -53,7 +53,7 @@ class InstrumentPanelWidget(QWidget):
             row = QFrame()
             row.setObjectName("readout_row")
             row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(4, 4, 4, 4)
+            row_layout.setContentsMargins(2, 2, 2, 2)
             row_layout.setSpacing(8)
 
             lbl = QLabel(label_text)

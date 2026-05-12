@@ -22,9 +22,12 @@ class ControlPanelWidget(QWidget):
     def __init__(self, user_info: dict, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         root = QVBoxLayout(self)
+        root.setSpacing(4)
+        root.setContentsMargins(4, 4, 4, 4)
 
         self.btn_start = QPushButton("Start")
-        self.btn_start.setMinimumHeight(56)
+        self.btn_start.setObjectName("btn_start")
+        self.btn_start.setMinimumHeight(40)
         root.addWidget(self.btn_start)
 
         self.btn_stop = QPushButton("Stop")
@@ -32,6 +35,7 @@ class ControlPanelWidget(QWidget):
         root.addWidget(self.btn_stop)
 
         user_box = QGroupBox("User")
+        user_box.setObjectName("grp_user")
         user_form = QFormLayout(user_box)
         self.edit_user_name = QLineEdit()
         self.edit_user_name.setReadOnly(True)
@@ -44,7 +48,12 @@ class ControlPanelWidget(QWidget):
         root.addWidget(user_box)
 
         unit_box = QGroupBox("Unit")
+        unit_box.setObjectName("grp_unit")
         unit_form = QFormLayout(unit_box)
+        self.edit_uut_type = QLineEdit()
+        self.edit_uut_type.setReadOnly(True)
+        self.edit_uut_type.setPlaceholderText("—")
+        unit_form.addRow("UUT type", self.edit_uut_type)
         self.edit_part_number = QLineEdit()
         unit_form.addRow("Part number", self.edit_part_number)
         self.edit_serial_number = QLineEdit()
@@ -52,6 +61,7 @@ class ControlPanelWidget(QWidget):
         root.addWidget(unit_box)
 
         status_box = QGroupBox("Status")
+        status_box.setObjectName("grp_status")
         status_layout = QVBoxLayout(status_box)
         self.edit_current_test = QLineEdit()
         self.edit_current_test.setReadOnly(True)
@@ -68,17 +78,17 @@ class ControlPanelWidget(QWidget):
         status_layout.addWidget(self.progress_total)
 
         counters = QHBoxLayout()
-        self.label_pass = QLabel("0")
+        self.label_pass = QLabel("PASS: 0")
         self.label_pass.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label_pass.setStyleSheet(
             "background-color: #22c55e; color: white; font-weight: bold; "
-            "padding: 8px; border-radius: 4px;"
+            "padding: 4px; border-radius: 4px;"
         )
-        self.label_fail = QLabel("0")
+        self.label_fail = QLabel("FAIL: 0")
         self.label_fail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label_fail.setStyleSheet(
             "background-color: #ef4444; color: white; font-weight: bold; "
-            "padding: 8px; border-radius: 4px;"
+            "padding: 4px; border-radius: 4px;"
         )
         counters.addWidget(self.label_pass)
         counters.addWidget(self.label_fail)

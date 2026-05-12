@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import csv
 import html
-import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +12,7 @@ from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -34,13 +33,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from config import SHOW_LIVE_MONITOR
+from config import SHOW_LIVE_MONITOR, SHOW_SEARCH_BAR
+from logic.database_manager import DatabaseManager
 from logic.models import TestResultPayload
 from logic.monitor_engine import MonitorThread
+from logic.report_generator import ReportGenerator
 from logic.script_manager import ScriptManager, ScriptParseError
+from logic.secure_logger import get_secure_logger
 from logic.test_engine import TestRunnerThread
-from ui.views.script_editor import ScriptEditorDialog
+from ui.views.audit_viewer_dialog import AuditViewerDialog
+from ui.views.pre_test_dialog import PreTestDialog
+from ui.views.select_test_dialog import SelectTestDialog
+from ui.views.sequence_editor_dialog import SequenceEditorDialog
 from ui.views.user_management_dialog import UserManagementDialog
+from ui.views.version_manager_dialog import VersionManagerDialog
 from ui.widgets.control_panel import ControlPanelWidget
 from ui.widgets.instrument_panel import InstrumentPanelWidget
 from version import __version__
@@ -69,13 +75,23 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         self._setup_menu_bar()
         self.test_thread: TestRunnerThread | None = None
-        self.is_dark_mode: bool = True
+        self.is_dark_mode: bool = False
         self._script_manager = ScriptManager()
         self._active_script_path: Path = (
             self._script_manager.scripts_dir / _DEFAULT_SCRIPT_NAME
         )
         self._trace_history: list[dict] = []
         self._part_number_user_edited = False
+        self._catalog_test_name: str = Path(_DEFAULT_SCRIPT_NAME).stem
+        self._catalog_uut_type: str = ""
+        self._operator_temp_script: Path | None = None
+        self._pre_test_locked: bool = False
+        try:
+            self._secure = get_secure_logger()
+        except Exception:
+            self._secure = None
+        self._last_run_meta: dict | None = None
+        self._last_run_rows: list[dict] = []
         self._setup_ui()
         if SHOW_LIVE_MONITOR:
             self.monitor_thread = MonitorThread(parent=self)
@@ -84,7 +100,14 @@ class MainWindow(QMainWindow):
         self._apply_theme_file()
         self._update_icons(self.is_dark_mode)
         self._apply_role_permissions()
-        self._reload_script_into_list()
+        if self._is_operator():
+            self._active_script_path = Path()
+            self.label_active_script.setText("No test — use Select Test.")
+            self.test_list.clear()
+            self._catalog_test_name = ""
+            self._catalog_uut_type = ""
+        else:
+            self._reload_script_into_list()
 
     def _make_ribbon_button(self, object_name: str, text: str) -> QToolButton:
         btn = QToolButton()
@@ -110,7 +133,9 @@ class MainWindow(QMainWindow):
         theme_fallback = SP.SP_DialogYesButton if is_dark else SP.SP_DialogNoButton
         self.btn_toggle_theme.setIcon(self._icon(theme_name, theme_fallback))
         self.btn_load_script.setIcon(self._icon("folder", SP.SP_DirOpenIcon))
-        self.btn_edit_script.setIcon(self._icon("edit", SP.SP_FileDialogDetailedView))
+        self.btn_edit_sequence.setIcon(self._icon("list", SP.SP_FileDialogListView))
+        self.btn_versions.setIcon(self._icon("list", SP.SP_FileDialogDetailedView))
+        self.btn_audit.setIcon(self._icon("list", SP.SP_FileDialogListView))
         self.btn_logout.setIcon(self._icon("logout", SP.SP_ArrowBack))
         self.btn_exit.setIcon(self._icon("power", SP.SP_DialogCloseButton))
 
@@ -127,25 +152,27 @@ class MainWindow(QMainWindow):
         menu = self.menuBar()
 
         file_menu = menu.addMenu("&File")
-        file_menu.addAction("&New Script...", self.new_script)
-        file_menu.addAction("&Open Script...", self.load_script)
-        file_menu.addAction("&Save Results...", self.save_results_json)
+        file_menu.addAction("&Select Test...", self.load_script)
         file_menu.addSeparator()
         file_menu.addAction("E&xit", self.close)
 
         test_menu = menu.addMenu("&Test")
-        test_menu.addAction("&Run", self.start_tests)
+        test_menu.addAction("&Run", self._on_start_clicked)
         test_menu.addAction("&Stop", self.stop_tests)
         test_menu.addSeparator()
         test_menu.addAction("Re&set Counters", self.reset_counters)
 
         results_menu = menu.addMenu("&Results")
-        results_menu.addAction("Export to &CSV...", self.export_results_csv)
         results_menu.addAction("Open Results &Folder", self.open_results_folder)
+        results_menu.addSeparator()
+        results_menu.addAction("Export to &CSV...", self.export_results_csv)
+        results_menu.addAction("Export to &PDF...", self.export_results_pdf)
 
-        help_menu = menu.addMenu("&Help")
         if self._is_admin():
-            help_menu.addAction("&User Management...", self.open_user_management)
+            users_menu = menu.addMenu("&Users")
+            users_menu.addAction("Audit &Log...", self.open_audit_viewer)
+            users_menu.addAction("&User Management...", self.open_user_management)
+        help_menu = menu.addMenu("&Help")
         help_menu.addAction("&About", self.show_about_dialog)
 
     def _current_role(self) -> str:
@@ -157,11 +184,44 @@ class MainWindow(QMainWindow):
     def _is_admin(self) -> bool:
         return self._current_role() == "Admin"
 
+    def _is_technician(self) -> bool:
+        return self._current_role() == "Technician"
+
     def _apply_role_permissions(self) -> None:
-        if self._is_operator():
-            self.btn_edit_script.hide()
+        hide_detail_cols = self._is_operator() or self._is_technician()
+        if hide_detail_cols:
+            self.results_table.setColumnHidden(1, True)
             self.results_table.setColumnHidden(2, True)
             self.results_table.setColumnHidden(3, True)
+        else:
+            self.results_table.setColumnHidden(1, False)
+            self.results_table.setColumnHidden(2, False)
+            self.results_table.setColumnHidden(3, False)
+
+        self.btn_versions.setVisible(self._is_admin())
+        self.btn_audit.setVisible(self._is_admin())
+
+        self.btn_load_script.setText("Select Test")
+        if self._is_operator():
+            self.btn_edit_sequence.hide()
+        else:
+            self.btn_edit_sequence.show()
+
+    def open_version_manager(self) -> None:
+        if not self._is_admin():
+            return
+        VersionManagerDialog(
+            current_username=str(self._user_info.get("username", "")),
+            script_manager=self._script_manager,
+            employee_id=str(self._user_info.get("employee_id", "")),
+            parent=self,
+        ).exec()
+
+    def open_audit_viewer(self) -> None:
+        if not self._is_admin():
+            QMessageBox.warning(self, "Not allowed", "Only Admin users can open the audit log.")
+            return
+        AuditViewerDialog(parent=self).exec()
 
     def open_user_management(self) -> None:
         if not self._is_admin():
@@ -173,27 +233,9 @@ class MainWindow(QMainWindow):
         )
         dialog.exec()
 
-    def new_script(self) -> None:
-        scripts_dir = self._script_manager.scripts_dir
-        scripts_dir.mkdir(parents=True, exist_ok=True)
-        selected, _ = QFileDialog.getSaveFileName(
-            self,
-            "New test script",
-            str(scripts_dir / "untitled.tst"),
-            "Test Script Files (*.tst)",
-        )
-        if not selected:
-            return
-        path = Path(selected)
-        if path.suffix.lower() != ".tst":
-            path = path.with_suffix(".tst")
-        self._script_manager.write_script(path, "")
-        self._active_script_path = path
-        self._reload_script_into_list()
-
     def reset_counters(self) -> None:
-        self.control_panel.label_pass.setText("0")
-        self.control_panel.label_fail.setText("0")
+        self.control_panel.label_pass.setText("PASS: 0")
+        self.control_panel.label_fail.setText("FAIL: 0")
         self.control_panel.progress_total.setValue(0)
         self.control_panel.progress_test.setValue(0)
         self.control_panel.edit_current_test.clear()
@@ -238,95 +280,76 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder.resolve())))
 
     def export_results_csv(self) -> None:
-        if self.results_table.rowCount() == 0:
-            QMessageBox.information(self, "Export to CSV", "No results to export.")
+        if self._last_run_meta is None:
+            QMessageBox.information(
+                self,
+                "Export",
+                "No completed test results are cached. Run a test sequence first.",
+            )
             return
-        default = self._ensure_results_dir() / f"{self._default_export_basename()}.csv"
+        
+        rg = ReportGenerator()
+        archive_dir, stem = rg._resolved_archive_paths(self._last_run_meta)
+        role_key = self._current_role().replace(" ", "_")
+        suggested = archive_dir / f"{stem}_{role_key}.csv"
+        
         selected, _ = QFileDialog.getSaveFileName(
             self,
-            "Export results to CSV",
-            str(default),
+            "Export results as CSV",
+            str(suggested),
             "CSV Files (*.csv)",
         )
         if not selected:
             return
-        self._write_results_csv(Path(selected))
+        path = Path(selected)
+        if path.suffix.lower() != ".csv":
+            path = path.with_suffix(".csv")
+        try:
+            rg.generate_csv_file(
+                path,
+                self._last_run_meta,
+                self._last_run_rows,
+                self._current_role(),
+            )
+            QMessageBox.information(self, "Export", f"Saved:\n{path}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Export failed", str(exc))
 
-    def save_results_json(self) -> None:
-        if self.results_table.rowCount() == 0:
-            QMessageBox.information(self, "Save Results", "No results to save.")
+    def export_results_pdf(self) -> None:
+        if self._last_run_meta is None:
+            QMessageBox.information(
+                self,
+                "Export",
+                "No completed test results are cached. Run a test sequence first.",
+            )
             return
-        default = self._ensure_results_dir() / f"{self._default_export_basename()}.json"
+        
+        rg = ReportGenerator()
+        archive_dir, stem = rg._resolved_archive_paths(self._last_run_meta)
+        role_key = self._current_role().replace(" ", "_")
+        suggested = archive_dir / f"{stem}_{role_key}.pdf"
+        
         selected, _ = QFileDialog.getSaveFileName(
             self,
-            "Save Results",
-            str(default),
-            "JSON Files (*.json)",
+            "Export results as PDF",
+            str(suggested),
+            "PDF Files (*.pdf)",
         )
         if not selected:
             return
-        self._write_results_json(Path(selected))
-
-    def _write_results_csv(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        is_operator = self._is_operator()
-        headers = (
-            ["Test Name", "Value", "Result"]
-            if is_operator
-            else ["Test Name", "Value", "Min", "Max", "Result"]
-        )
-        columns = [0, 1, 4] if is_operator else [0, 1, 2, 3, 4]
-        with path.open("w", newline="", encoding="utf-8") as f:
-            meta = self._export_metadata("DFX Tester - Test Report")
-            f.write(self._format_text_header(meta))
-            writer = csv.writer(f)
-            writer.writerow(headers)
-            for row in range(self.results_table.rowCount()):
-                writer.writerow(
-                    [
-                        self.results_table.item(row, c).text()
-                        if self.results_table.item(row, c)
-                        else ""
-                        for c in columns
-                    ]
-                )
-
-    def _write_results_json(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        is_operator = self._is_operator()
-        keys = (
-            ("test_name", "value", "result")
-            if is_operator
-            else ("test_name", "value", "min", "max", "result")
-        )
-        columns = [0, 1, 4] if is_operator else [0, 1, 2, 3, 4]
-        rows: list[dict[str, str]] = []
-        for row in range(self.results_table.rowCount()):
-            rows.append(
-                {
-                    keys[idx]: (
-                        self.results_table.item(row, col).text()
-                        if self.results_table.item(row, col)
-                        else ""
-                    )
-                    for idx, col in enumerate(columns)
-                }
+        path = Path(selected)
+        if path.suffix.lower() != ".pdf":
+            path = path.with_suffix(".pdf")
+        try:
+            rg.generate_pdf_file(
+                path,
+                self._last_run_meta,
+                self._last_run_rows,
+                self._current_role(),
             )
-        meta = self._export_metadata("DFX Tester - Test Report")
-        payload = {
-            "title": meta["title"],
-            "part_number": meta["part_number"],
-            "serial_number": meta["serial_number"],
-            "date": meta["date"],
-            "user_name": meta["user_name"],
-            "user_role": meta["user_role"],
-            "script": self._active_script_path.name,
-            "rows": rows,
-        }
-        path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+            QMessageBox.information(self, "Export", f"Saved:\n{path}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Export failed", str(exc))
 
     def _make_log_button(
         self,
@@ -377,16 +400,24 @@ class MainWindow(QMainWindow):
         ribbon.addWidget(self.btn_toggle_theme)
 
         self.btn_load_script = self._make_ribbon_button(
-            "btn_load_script", "Open Test File"
+            "btn_load_script", "Select Test"
         )
         self.btn_load_script.clicked.connect(self.load_script)
         ribbon.addWidget(self.btn_load_script)
 
-        self.btn_edit_script = self._make_ribbon_button(
-            "btn_edit_script", "Edit Test File"
+        self.btn_edit_sequence = self._make_ribbon_button(
+            "btn_edit_sequence", "Edit Sequence"
         )
-        self.btn_edit_script.clicked.connect(self.open_script_editor)
-        ribbon.addWidget(self.btn_edit_script)
+        self.btn_edit_sequence.clicked.connect(self.open_sequence_editor)
+        ribbon.addWidget(self.btn_edit_sequence)
+
+        self.btn_versions = self._make_ribbon_button("btn_versions", "Versions")
+        self.btn_versions.clicked.connect(self.open_version_manager)
+        ribbon.addWidget(self.btn_versions)
+
+        self.btn_audit = self._make_ribbon_button("btn_audit", "Audit")
+        self.btn_audit.clicked.connect(self.open_audit_viewer)
+        ribbon.addWidget(self.btn_audit)
 
         self.label_active_script = QLabel("")
         ribbon.addSpacing(12)
@@ -421,27 +452,30 @@ class MainWindow(QMainWindow):
         sidebar_layout = QVBoxLayout(self.left_sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(8)
+        self.lbl_test_cases = QLabel("Test Cases")
+        self.lbl_test_cases.setObjectName("lbl_test_cases")
+        sidebar_layout.addWidget(self.lbl_test_cases)
         sidebar_layout.addWidget(self.test_list, stretch=1)
-        if SHOW_LIVE_MONITOR:
-            self.instrument_panel = InstrumentPanelWidget()
-            sidebar_layout.addWidget(self.instrument_panel, stretch=0)
 
         results_table_container = QWidget()
         center_layout = QVBoxLayout(results_table_container)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(6)
 
-        self.edit_filter_results = QLineEdit()
-        self.edit_filter_results.setObjectName("edit_filter_results")
-        self.edit_filter_results.setClearButtonEnabled(True)
-        self.edit_filter_results.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        self.edit_filter_results.setPlaceholderText(
-            "\U0001F50D Search results (Test Name, Status...)"
-        )
-        self.edit_filter_results.textChanged.connect(self._filter_table_results)
-        center_layout.addWidget(self.edit_filter_results)
+        if SHOW_SEARCH_BAR:
+            self.edit_filter_results = QLineEdit()
+            self.edit_filter_results.setObjectName("edit_filter_results")
+            self.edit_filter_results.setClearButtonEnabled(True)
+            self.edit_filter_results.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            )
+            self.edit_filter_results.setPlaceholderText(
+                "\U0001F50D Search results (Test Name, Status...)"
+            )
+            self.edit_filter_results.textChanged.connect(self._filter_table_results)
+            center_layout.addWidget(self.edit_filter_results)
+        else:
+            self.edit_filter_results = None
 
         self.results_table = QTableWidget(0, 5)
         self.results_table.setObjectName("results_table")
@@ -458,7 +492,10 @@ class MainWindow(QMainWindow):
         self.results_table.setColumnWidth(1, 100)
         self.results_table.setColumnWidth(2, 100)
         self.results_table.setColumnWidth(3, 100)
-        center_layout.addWidget(self.results_table)
+        self.results_table.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        center_layout.addWidget(self.results_table, stretch=1)
 
         self.trace_log = QTextEdit()
         self.trace_log.setObjectName("trace_log")
@@ -514,19 +551,28 @@ class MainWindow(QMainWindow):
         self.control_panel = ControlPanelWidget(self._user_info)
         self.control_panel.setObjectName("control_panel")
         self.control_panel.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding
         )
         self.control_panel.setMinimumWidth(280)
         self.control_panel.setMaximumWidth(340)
-        self.control_panel.btn_start.clicked.connect(self.start_tests)
+        self.control_panel.btn_start.clicked.connect(self._on_start_clicked)
         self.control_panel.btn_stop.clicked.connect(self.stop_tests)
         self.control_panel.edit_part_number.textEdited.connect(
             self._mark_part_number_user_edited
         )
 
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(2)
+        if SHOW_LIVE_MONITOR:
+            self.instrument_panel = InstrumentPanelWidget()
+            right_layout.addWidget(self.instrument_panel, stretch=0)
+        right_layout.addWidget(self.control_panel, stretch=1)
+
         main_row.addWidget(self.left_sidebar)
         main_row.addWidget(v_splitter, stretch=1)
-        main_row.addWidget(self.control_panel)
+        main_row.addWidget(right_panel)
 
         main_layout.addLayout(main_row, stretch=1)
 
@@ -557,66 +603,86 @@ class MainWindow(QMainWindow):
         self._apply_theme_file()
         self._update_icons(self.is_dark_mode)
 
-    def _user_can_edit_scripts(self) -> bool:
-        """Only Engineers/Admins can open the script editor."""
-        return self._current_role() in {"Engineer", "Admin"}
+    def _apply_test_item_permissions(self, item: QListWidgetItem) -> None:
+        flags = item.flags() | Qt.ItemFlag.ItemIsUserCheckable
+        if self._is_operator():
+            flags &= ~Qt.ItemFlag.ItemIsUserCheckable
+        item.setFlags(flags)
 
     def _mark_part_number_user_edited(self, _text: str) -> None:
         self._part_number_user_edited = True
 
-    def load_script(self) -> None:
-        """Pick a `.tst` file and make it the active sequence."""
-        scripts_dir = self._script_manager.scripts_dir
-        scripts_dir.mkdir(parents=True, exist_ok=True)
-
-        selected, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load test script",
-            str(scripts_dir),
-            "Test Script Files (*.tst);;All Files (*)",
-        )
-        if not selected:
+    def _cleanup_operator_temp(self) -> None:
+        if self._operator_temp_script is None:
             return
+        path = self._operator_temp_script
+        self._operator_temp_script = None
+        try:
+            if path.is_file():
+                path.unlink()
+        except OSError:
+            pass
 
-        self._active_script_path = Path(selected)
-        self._reload_script_into_list()
+    @staticmethod
+    def _parse_labeled_counter(text: str, prefix: str) -> int:
+        needle = prefix + ":"
+        if needle in text:
+            try:
+                return int(text.split(needle, 1)[1].strip())
+            except ValueError:
+                return 0
+        return 0
 
-    def open_script_editor(self) -> None:
-        """Pick a `.tst` file from the data folder and open it in the editor."""
-        if not self._user_can_edit_scripts():
-            QMessageBox.information(
-                self,
-                "Not allowed",
-                "Your role does not have permission to edit test scripts.",
+    def _unlock_pre_test_fields(self) -> None:
+        self._pre_test_locked = False
+        self.control_panel.edit_serial_number.setReadOnly(False)
+        self.control_panel.edit_uut_type.setReadOnly(False)
+        self.control_panel.edit_user_name.setReadOnly(True)
+        self.control_panel.edit_user_name.setText(str(self._user_info.get("name", "")))
+        self.control_panel.edit_serial_number.clear()
+        self.control_panel.edit_uut_type.clear()
+
+    def _finalize_run_reports(self) -> None:
+        th = self.test_thread
+        if th is None:
+            return
+        try:
+            meta, rows = th.report_snapshot()
+            logical_name = f"{self._catalog_test_name} {getattr(self, '_catalog_version', '')}".strip()
+            meta["test_program_name"] = logical_name
+            self._last_run_meta = meta
+            self._last_run_rows = list(rows)
+            pdf_path = ReportGenerator().generate_pdf_auto_archive(
+                meta, rows, self._current_role()
             )
+            self.append_trace(f"Report archived: {pdf_path.name}")
+        except Exception as exc:
+            self.append_trace(f"Report generation failed: {exc!s}")
+
+    def load_script(self) -> None:
+        """Load a test from the database catalog (temp file) for every role."""
+        dlg = SelectTestDialog(parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-
-        scripts_dir = self._script_manager.scripts_dir
-        scripts_dir.mkdir(parents=True, exist_ok=True)
-
-        selected, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select test script",
-            str(scripts_dir),
-            "Test Script Files (*.tst);;All Files (*)",
-        )
-        if not selected:
+        path = dlg.selected_path()
+        if path is None:
             return
-
-        path = Path(selected)
-        dialog = ScriptEditorDialog(self._script_manager, parent=self)
-        dialog.load_file(path)
-        dialog.exec()
-
-        if path == self._active_script_path:
-            self._reload_script_into_list()
+        catalog = dlg.selected_catalog() or {}
+        uut_type = str(catalog.get("uut_type", ""))
+        self._cleanup_operator_temp()
+        self._operator_temp_script = path
+        self._active_script_path = path
+        self._catalog_test_name = str(catalog.get("test_name", path.stem))
+        self._catalog_version = str(catalog.get("version_name", ""))
+        self._catalog_uut_type = uut_type
+        self.control_panel.edit_uut_type.setText(uut_type)
+        self._reload_script_into_list()
 
     def _reload_script_into_list(self) -> None:
         """Parse the active script and repopulate the test list checkboxes."""
         self.test_list.clear()
-        self.label_active_script.setText(
-            f"Script: {self._active_script_path.name}"
-        )
+        logical_name = f"{self._catalog_test_name} {getattr(self, '_catalog_version', '')}".strip()
+        self.label_active_script.setText(f"Script: {logical_name}")
 
         if not self._active_script_path.is_file():
             self.append_trace(
@@ -648,7 +714,7 @@ class MainWindow(QMainWindow):
 
         for step in steps:
             item = QListWidgetItem(step.name)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            self._apply_test_item_permissions(item)
             item.setCheckState(Qt.CheckState.Checked)
             self.test_list.addItem(item)
 
@@ -657,8 +723,9 @@ class MainWindow(QMainWindow):
             self.control_panel.edit_part_number.setText(script_part_number)
 
         self.append_trace(
-            f"Loaded {len(steps)} step(s) from {self._active_script_path.name}."
+            f"Loaded {len(steps)} step(s) from {logical_name}."
         )
+        self.control_panel.edit_part_number.setReadOnly(True)
 
     def _selected_test_names(self) -> list[str]:
         """Return only checked test names from the list widget."""
@@ -669,7 +736,82 @@ class MainWindow(QMainWindow):
                 names.append(item.text())
         return names
 
-    def start_tests(self) -> None:
+    def _rebuild_test_list_from_names(self, names: list[str]) -> None:
+        self.test_list.clear()
+        for name in names:
+            item = QListWidgetItem(name)
+            self._apply_test_item_permissions(item)
+            item.setCheckState(Qt.CheckState.Checked)
+            self.test_list.addItem(item)
+
+    def open_sequence_editor(self) -> None:
+        if self._is_operator():
+            return
+        if not self._active_script_path.is_file():
+            QMessageBox.information(self, "Edit Sequence", "Load a script first.")
+            return
+        try:
+            document = self._script_manager.load_document(self._active_script_path)
+        except ScriptParseError as exc:
+            QMessageBox.warning(
+                self,
+                "Script parse error",
+                f"Could not parse {self._active_script_path.name}:\n"
+                f"line {exc.line_no}: {exc.msg}",
+            )
+            return
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Edit Sequence", f"Could not load script:\n{exc}")
+            return
+
+        persist = self._is_technician() or self._is_admin()
+        uut_save = (
+            self.control_panel.edit_uut_type.text().strip()
+            or self._catalog_uut_type
+        )
+        dialog = SequenceEditorDialog(
+            active_names=self._selected_test_names(),
+            available_steps=document.steps,
+            persist_new_version=persist,
+            catalog_test_name=self._catalog_test_name or self._active_script_path.stem,
+            catalog_uut_type=uut_save,
+            created_by=str(self._user_info.get("username", "")),
+            employee_id=str(self._user_info.get("employee_id", "")),
+            db=DatabaseManager() if persist else None,
+            script_manager=self._script_manager,
+            document_metadata=document.metadata,
+            parent=self,
+        )
+        if dialog.exec() != SequenceEditorDialog.DialogCode.Accepted:
+            return
+        self._rebuild_test_list_from_names(dialog.result_names())
+
+    def _on_start_clicked(self) -> None:
+        txt = self.control_panel.btn_start.text()
+        if txt == "Pause":
+            if self.test_thread and self.test_thread.isRunning():
+                self.test_thread.pause()
+            self.control_panel.btn_start.setText("Resume")
+            return
+
+        if txt == "Resume":
+            if self.test_thread and self.test_thread.isRunning():
+                self.test_thread.resume_pause()
+            self.control_panel.btn_start.setText("Pause")
+            return
+
+        dlg = PreTestDialog(
+            tester_name_default=str(self._user_info.get("name", "")),
+            default_uut_type=self.control_panel.edit_uut_type.text(),
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        dialog_results = dlg.result_dict()
+        self.control_panel.edit_serial_number.setText(dialog_results["serial_number"])
+        self.control_panel.edit_user_name.setText(dialog_results["tester_name"])
+
         tests_to_run = self._selected_test_names()
         if not tests_to_run:
             self.append_trace("No tests selected (check at least one item in the list).")
@@ -683,10 +825,8 @@ class MainWindow(QMainWindow):
             )
             return
 
-        operator = self.control_panel.edit_user_name.text().strip()
         part_number = self.control_panel.edit_part_number.text().strip()
         serial_number = self.control_panel.edit_serial_number.text().strip()
-
         if not part_number or not serial_number:
             QMessageBox.warning(
                 self,
@@ -695,16 +835,27 @@ class MainWindow(QMainWindow):
             )
             return
 
+        self.control_panel.edit_uut_type.setText(dialog_results["uut_type"])
+        self.control_panel.edit_serial_number.setReadOnly(True)
+        self.control_panel.edit_uut_type.setReadOnly(True)
+        self.control_panel.edit_user_name.setReadOnly(True)
+        self._pre_test_locked = True
+
+        self._clear_trace()
+        self._start_test_run(dialog_results)
+
+    def _start_test_run(self, pre_meta: dict) -> None:
+        tests_to_run = self._selected_test_names()
+
         self.results_table.setRowCount(0)
         self.control_panel.progress_total.setValue(0)
         self.control_panel.progress_test.setValue(0)
         self.control_panel.edit_current_test.clear()
-        self.control_panel.label_pass.setText("0")
-        self.control_panel.label_fail.setText("0")
-        self._clear_trace()
+        self.control_panel.label_pass.setText("PASS: 0")
+        self.control_panel.label_fail.setText("FAIL: 0")
 
-        self.control_panel.btn_start.setEnabled(False)
         self.control_panel.btn_stop.setEnabled(True)
+        self.control_panel.btn_start.setText("Pause")
 
         loop_count = (
             self.control_panel.spin_loops.value()
@@ -713,15 +864,30 @@ class MainWindow(QMainWindow):
         )
         stop_on_fail = self.control_panel.chk_stop_on_fail.isChecked()
 
+        operator = self.control_panel.edit_user_name.text().strip()
+        part_number = self.control_panel.edit_part_number.text().strip()
+        serial_number = self.control_panel.edit_serial_number.text().strip()
+
+        started = datetime.now()
+        employee_id = str(self._user_info.get("employee_id", ""))
+        logical_script_name = (
+            f"{self._catalog_test_name} {getattr(self, '_catalog_version', '')}"
+        ).strip()
+
         self.test_thread = TestRunnerThread(
             self._active_script_path,
             set(tests_to_run),
             loop_count=loop_count,
             stop_on_fail=stop_on_fail,
             operator=operator,
+            tester_name=pre_meta["tester_name"].strip(),
+            employee_id=employee_id,
+            uut_type=pre_meta["uut_type"].strip(),
             part_number=part_number,
             serial_number=serial_number,
             script_manager=self._script_manager,
+            start_time=started,
+            logical_script_name=logical_script_name,
         )
         self.test_thread.log_msg.connect(self.append_trace)
         self.test_thread.test_result.connect(self.update_results_table)
@@ -731,6 +897,21 @@ class MainWindow(QMainWindow):
         self.test_thread.prompt_request.connect(self._on_prompt_request)
         self.test_thread.script_log.connect(self._on_script_log)
         self.test_thread.finished.connect(self.on_tests_finished)
+
+        try:
+            DatabaseManager().log_audit_action(
+                "Test run started",
+                username=str(self._user_info.get("username", "")),
+                employee_id=employee_id,
+                details=(
+                    f"script={logical_script_name} "
+                    f"part={part_number!r} sn={serial_number!r} "
+                    f"steps={len(tests_to_run)}"
+                ),
+            )
+        except Exception:
+            pass
+
         self.test_thread.start()
 
     def _on_prompt_request(self, msg: str) -> None:
@@ -741,7 +922,16 @@ class MainWindow(QMainWindow):
 
     def _on_script_log(self, msg: str) -> None:
         """Append an operator-authored Log line to the trace, distinctly styled."""
-        self._record_trace("log", msg)
+        stamped = f"{datetime.now().strftime('[%H:%M:%S]')} {msg}"
+        self._record_trace("log", stamped)
+        if self._secure is not None:
+            try:
+                self._secure.log(
+                    "script_log",
+                    {"message": msg, "display": stamped},
+                )
+            except Exception:
+                pass
 
     def _format_trace_html(self, entry_type: str, text: str) -> str:
         if entry_type == "log":
@@ -790,6 +980,16 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if confirm == QMessageBox.StandardButton.Yes:
+            try:
+                DatabaseManager().log_audit_action(
+                    "User Logged Out",
+                    username=str(self._user_info.get("username", "")),
+                    employee_id=str(self._user_info.get("employee_id", "")),
+                    details="",
+                )
+            except Exception:
+                pass
+            self._cleanup_operator_temp()
             if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
                 self.monitor_thread.stop()
             self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -800,6 +1000,18 @@ class MainWindow(QMainWindow):
             self.close()
 
     def closeEvent(self, event) -> None:
+        app = QApplication.instance()
+        if app is not None and not bool(app.property("logout_requested")):
+            try:
+                DatabaseManager().log_audit_action(
+                    "User Logged Out",
+                    username=str(self._user_info.get("username", "")),
+                    employee_id=str(self._user_info.get("employee_id", "")),
+                    details="",
+                )
+            except Exception:
+                pass
+        self._cleanup_operator_temp()
         if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
             self.monitor_thread.stop()
         super().closeEvent(event)
@@ -834,19 +1046,46 @@ class MainWindow(QMainWindow):
         self.results_table.setItem(row, 4, status_item)
 
         if passed:
-            n = int(self.control_panel.label_pass.text() or "0") + 1
-            self.control_panel.label_pass.setText(str(n))
+            n = self._parse_labeled_counter(self.control_panel.label_pass.text(), "PASS") + 1
+            self.control_panel.label_pass.setText(f"PASS: {n}")
         else:
-            n = int(self.control_panel.label_fail.text() or "0") + 1
-            self.control_panel.label_fail.setText(str(n))
+            n = self._parse_labeled_counter(self.control_panel.label_fail.text(), "FAIL") + 1
+            self.control_panel.label_fail.setText(f"FAIL: {n}")
 
     def append_trace(self, msg: str) -> None:
+        stamped = f"{datetime.now().strftime('[%H:%M:%S]')} {msg}"
         entry_type = "cmd" if msg.startswith("Executing:") else "info"
-        self._record_trace(entry_type, msg)
+        self._record_trace(entry_type, stamped)
 
     def on_tests_finished(self) -> None:
-        if self.control_panel.btn_start.isEnabled():
+        th = self.test_thread
+        if th is None:
             return
-        self.control_panel.btn_start.setEnabled(True)
-        self.control_panel.btn_stop.setEnabled(False)
+
         self.append_trace("Sequence Complete.")
+
+        try:
+            self._finalize_run_reports()
+        finally:
+            try:
+                meta, _rows = th.report_snapshot()
+                DatabaseManager().log_audit_action(
+                    "Test run completed",
+                    username=str(self._user_info.get("username", "")),
+                    employee_id=str(self._user_info.get("employee_id", "")),
+                    details=(
+                        f"overall={meta.get('overall_result', '?')} "
+                        f"script={meta.get('test_program_name', '')}"
+                    ),
+                )
+            except Exception:
+                pass
+            th.resume_pause()
+
+        self.control_panel.btn_start.setText("Start")
+        self.control_panel.btn_stop.setEnabled(False)
+        self.control_panel.edit_part_number.setReadOnly(False)
+        if self._active_script_path.is_file():
+            self.control_panel.edit_part_number.setReadOnly(True)
+        self._unlock_pre_test_fields()
+        self.test_thread = None

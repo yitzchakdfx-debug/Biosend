@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-import hashlib
-import secrets
 
 from logic.models import TestRunRecord
 
 
 class DatabaseManager:
     """Create/open DB, ensure schema, save runs with parameterized queries."""
+
     _PBKDF2_ITERATIONS = 200_000
-    _ROLE_VALUES = ("Operator", "Engineer", "Admin")
+    _ROLE_VALUES = ("Operator", "Technician", "Admin")
 
     def __init__(self, db_path: Path | None = None) -> None:
         self._db_path = db_path or (
@@ -61,13 +62,36 @@ class DatabaseManager:
                 username TEXT UNIQUE NOT NULL COLLATE NOCASE,
                 password_hash BLOB NOT NULL,
                 salt BLOB NOT NULL,
-                role TEXT NOT NULL CHECK(role IN ('Operator','Engineer','Admin')),
-                must_change_pwd INTEGER NOT NULL DEFAULT 0,
+                role TEXT NOT NULL CHECK(role IN ('Operator','Technician','Admin')),
+                employee_id TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );"""
             )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS test_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                test_name TEXT NOT NULL,
+                uut_type TEXT NOT NULL,
+                version_name TEXT NOT NULL,
+                test_content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                UNIQUE(test_name, version_name)
+            );"""
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                username TEXT NOT NULL DEFAULT '',
+                employee_id TEXT NOT NULL DEFAULT '',
+                action TEXT NOT NULL,
+                details TEXT NOT NULL DEFAULT ''
+            );"""
+            )
             self._ensure_initial_admin(conn)
+            conn.commit()
 
     def _hash_password(self, password: str, salt: bytes) -> bytes:
         return hashlib.pbkdf2_hmac(
@@ -84,10 +108,10 @@ class DatabaseManager:
         conn.execute(
             """
             INSERT OR IGNORE INTO users
-            (username, password_hash, salt, role, must_change_pwd, created_at, updated_at)
+            (username, password_hash, salt, role, employee_id, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?);
             """,
-            ("lior", password_hash, salt, "Admin", 0, now, now),
+            ("lior", password_hash, salt, "Admin", "0000", now, now),
         )
 
     def _validate_role(self, role: str) -> str:
@@ -98,15 +122,11 @@ class DatabaseManager:
             )
         return normalized
 
-    def _generate_temp_password(self) -> str:
-        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
-        return "".join(secrets.choice(alphabet) for _ in range(8))
-
     def verify_login(self, username: str, password: str) -> dict | None:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT username, password_hash, salt, role, must_change_pwd
+                SELECT username, password_hash, salt, role, employee_id
                 FROM users
                 WHERE username = ?;
                 """,
@@ -121,7 +141,7 @@ class DatabaseManager:
                 "name": row["username"],
                 "username": row["username"],
                 "role": row["role"],
-                "must_change_pwd": bool(row["must_change_pwd"]),
+                "employee_id": str(row["employee_id"] or ""),
             }
 
     def create_user(
@@ -129,12 +149,13 @@ class DatabaseManager:
         username: str,
         password: str,
         role: str,
-        must_change_pwd: bool = False,
+        employee_id: str,
     ) -> None:
         clean_username = username.strip()
         if not clean_username:
             raise ValueError("Username is required.")
         role_value = self._validate_role(role)
+        eid = employee_id.strip()
         now = datetime.now().isoformat()
         salt = secrets.token_bytes(16)
         password_hash = self._hash_password(password, salt)
@@ -142,7 +163,7 @@ class DatabaseManager:
             conn.execute(
                 """
                 INSERT INTO users
-                (username, password_hash, salt, role, must_change_pwd, created_at, updated_at)
+                (username, password_hash, salt, role, employee_id, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
@@ -150,17 +171,12 @@ class DatabaseManager:
                     password_hash,
                     salt,
                     role_value,
-                    int(must_change_pwd),
+                    eid,
                     now,
                     now,
                 ),
             )
             conn.commit()
-
-    def reset_password_for_new_user(self, username: str, role: str) -> str:
-        temp_password = self._generate_temp_password()
-        self.create_user(username, temp_password, role, must_change_pwd=True)
-        return temp_password
 
     def _admin_count(self, conn: sqlite3.Connection) -> int:
         row = conn.execute(
@@ -208,7 +224,7 @@ class DatabaseManager:
             cur = conn.execute(
                 """
                 UPDATE users
-                SET password_hash = ?, salt = ?, must_change_pwd = 0, updated_at = ?
+                SET password_hash = ?, salt = ?, updated_at = ?
                 WHERE username = ?;
                 """,
                 (password_hash, salt, datetime.now().isoformat(), clean_username),
@@ -217,30 +233,58 @@ class DatabaseManager:
                 raise ValueError("User does not exist.")
             conn.commit()
 
-    def reset_password(self, username: str) -> str:
-        temp_password = self._generate_temp_password()
+    def update_user(
+        self,
+        username: str,
+        *,
+        role: str | None = None,
+        employee_id: str | None = None,
+        password: str | None = None,
+    ) -> None:
         clean_username = username.strip()
-        salt = secrets.token_bytes(16)
-        password_hash = self._hash_password(temp_password, salt)
         with self._connect() as conn:
-            cur = conn.execute(
-                """
-                UPDATE users
-                SET password_hash = ?, salt = ?, must_change_pwd = 1, updated_at = ?
-                WHERE username = ?;
-                """,
-                (password_hash, salt, datetime.now().isoformat(), clean_username),
-            )
-            if cur.rowcount == 0:
+            exists = conn.execute(
+                "SELECT role FROM users WHERE username = ?;",
+                (clean_username,),
+            ).fetchone()
+            if exists is None:
                 raise ValueError("User does not exist.")
-            conn.commit()
-        return temp_password
 
-    def list_users(self) -> list[dict[str, str | bool]]:
+            if role is not None:
+                role_value = self._validate_role(role)
+                current_role = exists["role"]
+                if current_role == "Admin" and role_value != "Admin" and self._admin_count(conn) <= 1:
+                    raise ValueError("Cannot demote the last admin user.")
+                conn.execute(
+                    "UPDATE users SET role = ?, updated_at = ? WHERE username = ?;",
+                    (role_value, datetime.now().isoformat(), clean_username),
+                )
+
+            if employee_id is not None:
+                conn.execute(
+                    "UPDATE users SET employee_id = ?, updated_at = ? WHERE username = ?;",
+                    (employee_id.strip(), datetime.now().isoformat(), clean_username),
+                )
+
+            if password is not None:
+                salt = secrets.token_bytes(16)
+                password_hash = self._hash_password(password, salt)
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET password_hash = ?, salt = ?, updated_at = ?
+                    WHERE username = ?;
+                    """,
+                    (password_hash, salt, datetime.now().isoformat(), clean_username),
+                )
+
+            conn.commit()
+
+    def list_users(self) -> list[dict[str, str]]:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT username, role, must_change_pwd
+                SELECT username, role, employee_id
                 FROM users
                 ORDER BY role DESC, username COLLATE NOCASE ASC;
                 """
@@ -249,10 +293,94 @@ class DatabaseManager:
                 {
                     "username": row["username"],
                     "role": row["role"],
-                    "must_change_pwd": bool(row["must_change_pwd"]),
+                    "employee_id": str(row["employee_id"] or ""),
                 }
                 for row in rows
             ]
+
+    # --- Test versions ------------------------------------------------------------
+
+    def add_test_version(
+        self,
+        test_name: str,
+        uut_type: str,
+        version_name: str,
+        content: str,
+        created_by: str,
+    ) -> int:
+        name = test_name.strip()
+        ver = version_name.strip()
+        if not name or not ver:
+            raise ValueError("test_name and version_name are required.")
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO test_versions (test_name, uut_type, version_name, test_content, created_at, created_by)
+                VALUES (?, ?, ?, ?, ?, ?);
+                """,
+                (name, uut_type.strip(), ver, content, now, created_by.strip()),
+            )
+            conn.commit()
+            return int(cur.lastrowid)
+
+    def list_test_versions(self) -> list[dict[str, str | int]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, test_name, uut_type, version_name, created_at, created_by
+                FROM test_versions
+                ORDER BY created_at DESC, test_name COLLATE NOCASE ASC, version_name COLLATE NOCASE DESC;
+                """
+            ).fetchall()
+            return [
+                {
+                    "id": int(row["id"]),
+                    "test_name": row["test_name"],
+                    "uut_type": row["uut_type"],
+                    "version_name": row["version_name"],
+                    "created_at": row["created_at"],
+                    "created_by": row["created_by"],
+                }
+                for row in rows
+            ]
+
+    def get_test_version(self, version_id: int) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, test_name, uut_type, version_name, test_content, created_at, created_by
+                FROM test_versions WHERE id = ?;
+                """,
+                (version_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "id": int(row["id"]),
+                "test_name": row["test_name"],
+                "uut_type": row["uut_type"],
+                "version_name": row["version_name"],
+                "test_content": row["test_content"],
+                "created_at": row["created_at"],
+                "created_by": row["created_by"],
+            }
+
+    def delete_test_version(self, version_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM test_versions WHERE id = ?;", (version_id,))
+            conn.commit()
+
+    def version_exists(self, test_name: str, version_name: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM test_versions
+                WHERE test_name = ? AND version_name = ?;
+                """,
+                (test_name.strip(), version_name.strip()),
+            ).fetchone()
+            return row is not None
 
     def save_run(self, record: TestRunRecord) -> int:
         with self._connect() as conn:
@@ -288,3 +416,72 @@ class DatabaseManager:
             )
             conn.commit()
             return run_id
+
+    # --- Audit trail ---------------------------------------------------------------
+
+    def log_audit_action(
+        self,
+        action: str,
+        *,
+        username: str = "",
+        employee_id: str = "",
+        details: str = "",
+    ) -> None:
+        """Append one row to ``audit_logs`` (UI and security events)."""
+        text = action.strip()
+        if not text:
+            raise ValueError("Audit action is required.")
+        ts = datetime.now().isoformat()
+        clean_username = username.strip()
+        clean_employee_id = employee_id.strip()
+        clean_details = details.strip()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO audit_logs (timestamp, username, employee_id, action, details)
+                VALUES (?, ?, ?, ?, ?);
+                """,
+                (
+                    ts,
+                    clean_username,
+                    clean_employee_id,
+                    text,
+                    clean_details,
+                ),
+            )
+            conn.commit()
+        try:
+            from logic.secure_logger import get_secure_logger
+
+            get_secure_logger().log_system_event(
+                username=clean_username,
+                action=text,
+                details=clean_details,
+            )
+        except Exception:
+            pass
+
+    def get_audit_logs(self, *, limit: int = 1000) -> list[dict[str, str]]:
+        """Newest-first audit rows for admin review."""
+        cap = max(1, min(int(limit), 50_000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, timestamp, username, employee_id, action, details
+                FROM audit_logs
+                ORDER BY timestamp DESC
+                LIMIT ?;
+                """,
+                (cap,),
+            ).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "timestamp": str(row["timestamp"]),
+                "username": str(row["username"] or ""),
+                "employee_id": str(row["employee_id"] or ""),
+                "action": str(row["action"] or ""),
+                "details": str(row["details"] or ""),
+            }
+            for row in rows
+        ]
