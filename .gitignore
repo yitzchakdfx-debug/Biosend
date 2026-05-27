@@ -1,3 +1,7 @@
+# Planning / working documents (not for version control)
+*PLAN*.md
+*_PLAN_*
+
 # PyInstaller build output
 build/
 dist/
