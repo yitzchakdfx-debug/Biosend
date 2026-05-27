@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from logic.auth_manager import AuthManager
 from logic.database_manager import DatabaseManager
+from paths import resource_path
 from ui.ui_helpers import attach_password_visibility_toggle
 
 
@@ -116,7 +117,7 @@ class LoginDialog(QDialog):
         self._password.returnPressed.connect(self._on_login)
 
         try:
-            qss_path = Path(__file__).resolve().parents[1] / "assets" / "style.qss"
+            qss_path = resource_path("ui", "assets", "style.qss")
             if qss_path.is_file():
                 self.setStyleSheet(qss_path.read_text(encoding="utf-8"))
         except Exception as e:

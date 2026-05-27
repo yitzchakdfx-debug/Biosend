@@ -14,11 +14,16 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas as _pdfcanvas
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from reportlab.platypus.tables import LongTable
 
 from config import ADMIN_REPORT_PASSWORD, TESTER_SERIAL_NUMBER
+from paths import resource_path, user_data_path
 from version import __version__
+
+_LOGO_PATH = resource_path("ui", "assets", "icons", "BirdLogo.png")
 
 def sanitize_path_segment(value: str) -> str:
     """Flatten whitespace and strip characters that break filesystem paths."""
@@ -30,11 +35,7 @@ class ReportGenerator:
     """Writes PDF archives under src/data/results/<UUT>/<Serial>/ and optional manual exports."""
 
     def __init__(self, base_dir: Path | None = None) -> None:
-        self._base = (
-            base_dir
-            if base_dir is not None
-            else Path(__file__).resolve().parent.parent / "data" / "results"
-        )
+        self._base = base_dir if base_dir is not None else user_data_path("results")
 
     def _resolved_archive_paths(self, run_meta: dict[str, Any]) -> tuple[Path, str]:
         """Sanitized subdirectory (uut/serial), timestamp stem for filenames."""
@@ -167,6 +168,78 @@ def _write_csv(
                 )
 
 
+_LOGO_TARGET_WIDTH = 1.6 * inch
+_LOGO_RIGHT_MARGIN = 0.35 * inch
+_LOGO_TOP_MARGIN = 0.30 * inch
+
+
+def _build_logo_watermark_bytes(page_size: tuple[float, float]) -> bytes | None:
+    """Single-page PDF with the company logo anchored to the top-right corner.
+
+    Coordinates are computed from absolute page dimensions (independent of
+    content length) so the stamp lands in the same spot on every page.
+    Each call builds its own buffer/canvas — no shared state, safe for
+    concurrent use with ``page.merge_page()``.
+    """
+    if not _LOGO_PATH.is_file():
+        return None
+    try:
+        img_reader = ImageReader(str(_LOGO_PATH))
+        src_w, src_h = img_reader.getSize()
+    except Exception:
+        return None
+    if src_w <= 0 or src_h <= 0:
+        return None
+
+    aspect = src_h / src_w
+    logo_w = _LOGO_TARGET_WIDTH
+    logo_h = logo_w * aspect
+
+    width, height = page_size
+    x = width - logo_w - _LOGO_RIGHT_MARGIN
+    y = height - logo_h - _LOGO_TOP_MARGIN
+
+    buf = io.BytesIO()
+    c = _pdfcanvas.Canvas(buf, pagesize=page_size)
+    try:
+        c.drawImage(
+            img_reader,
+            x,
+            y,
+            width=logo_w,
+            height=logo_h,
+            mask="auto",
+            preserveAspectRatio=True,
+            anchor="ne",
+        )
+    except Exception:
+        return None
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+def _stamp_logo_watermark(raw_pdf: bytes, page_size: tuple[float, float]) -> bytes:
+    """Overlay the logo watermark on every page via ``page.merge_page()``.
+
+    The watermark sits in the top margin (above the title area), so the
+    underlying table text is not displaced and alignment is preserved.
+    """
+    watermark_bytes = _build_logo_watermark_bytes(page_size)
+    if watermark_bytes is None:
+        return raw_pdf
+    src_reader = PdfReader(io.BytesIO(raw_pdf))
+    wm_reader = PdfReader(io.BytesIO(watermark_bytes))
+    wm_page = wm_reader.pages[0]
+    writer = PdfWriter()
+    for pg in src_reader.pages:
+        pg.merge_page(wm_page)
+        writer.add_page(pg)
+    out_buf = io.BytesIO()
+    writer.write(out_buf)
+    return out_buf.getvalue()
+
+
 def write_pdf_report(
     path: Path,
     run_meta: dict[str, Any],
@@ -215,9 +288,42 @@ def write_pdf_report(
     flow.append(Spacer(1, 0.25 * inch))
 
     if is_admin:
-        data = [["Test Name", "Min", "Max", "Value", "Unit", "Status"]]
-        for row in results:
-            ok = bool(row.get("passed"))
+        headers = ["Test Name", "Min", "Max", "Value", "Unit", "Status"]
+        col_w = [
+            1.35 * inch,
+            0.75 * inch,
+            0.75 * inch,
+            0.85 * inch,
+            0.65 * inch,
+            0.65 * inch,
+        ]
+    else:
+        headers = ["Test Name", "Result"]
+        col_w = [5.35 * inch, 1 * inch]
+
+    n_cols = len(headers)
+    loop_total = max(1, int(run_meta.get("loop_count", 1) or 1))
+    has_loops = loop_total > 1 and any(int(r.get("loop", 1)) > 1 for r in results)
+
+    data: list[list[Any]] = [headers]
+    loop_header_rows: list[int] = []
+    fail_rows: list[int] = []
+    current_loop: int | None = None
+
+    for row in results:
+        loop_num = int(row.get("loop", 1))
+        if has_loops and loop_num != current_loop:
+            loop_header_rows.append(len(data))
+            data.append(
+                [f"Loop {loop_num} of {loop_total}"] + [""] * (n_cols - 1)
+            )
+            current_loop = loop_num
+
+        ok = bool(row.get("passed"))
+        if not ok:
+            fail_rows.append(len(data))
+
+        if is_admin:
             data.append(
                 [
                     Paragraph(row.get("test_name", ""), styles["Normal"]),
@@ -228,45 +334,57 @@ def write_pdf_report(
                     "PASS" if ok else "FAIL",
                 ]
             )
-        col_w = [
-            1.35 * inch,
-            0.75 * inch,
-            0.75 * inch,
-            0.85 * inch,
-            0.65 * inch,
-            0.65 * inch,
-        ]
-        rt = LongTable(data, colWidths=col_w, repeatRows=1)
-    else:
-        data = [["Test Name", "Result"]]
-        for row in results:
+        else:
             data.append(
                 [
                     Paragraph(row.get("test_name", ""), styles["Normal"]),
-                    "PASS" if row.get("passed") else "FAIL",
+                    "PASS" if ok else "FAIL",
                 ]
             )
-        rt = LongTable(data, colWidths=[5.35 * inch, 1 * inch], repeatRows=1)
 
-    rt.setStyle(
-        TableStyle(
+    rt = LongTable(data, colWidths=col_w, repeatRows=1)
+
+    fail_bg = colors.HexColor("#fee2e2")   # light pink — highlights the row
+    fail_fg = colors.HexColor("#b91c1c")   # strong red — bold FAIL text
+
+    style_cmds: list[Any] = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#444444")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]
+    for ridx in loop_header_rows:
+        style_cmds.extend(
             [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#444444")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("SPAN", (0, ridx), (-1, ridx)),
+                ("BACKGROUND", (0, ridx), (-1, ridx), colors.HexColor("#2f65ca")),
+                ("TEXTCOLOR", (0, ridx), (-1, ridx), colors.whitesmoke),
+                ("FONTNAME", (0, ridx), (-1, ridx), "Helvetica-Bold"),
+                ("ALIGN", (0, ridx), (-1, ridx), "CENTER"),
+                ("TOPPADDING", (0, ridx), (-1, ridx), 6),
+                ("BOTTOMPADDING", (0, ridx), (-1, ridx), 6),
             ]
         )
-    )
+    for ridx in fail_rows:
+        style_cmds.extend(
+            [
+                ("BACKGROUND", (0, ridx), (-1, ridx), fail_bg),
+                ("TEXTCOLOR", (-1, ridx), (-1, ridx), fail_fg),
+                ("FONTNAME", (-1, ridx), (-1, ridx), "Helvetica-Bold"),
+            ]
+        )
+    rt.setStyle(TableStyle(style_cmds))
     flow.append(rt)
 
     doc.build(flow)
     raw_pdf = buffer.getvalue()
     buffer.close()
 
+    stamped_pdf = _stamp_logo_watermark(raw_pdf, letter)
+
     if is_admin:
-        reader = PdfReader(io.BytesIO(raw_pdf))
+        reader = PdfReader(io.BytesIO(stamped_pdf))
         writer = PdfWriter()
         for pg in reader.pages:
             writer.add_page(pg)
@@ -278,4 +396,4 @@ def write_pdf_report(
         writer.write(out_buf)
         path.write_bytes(out_buf.getvalue())
     else:
-        path.write_bytes(raw_pdf)
+        path.write_bytes(stamped_pdf)

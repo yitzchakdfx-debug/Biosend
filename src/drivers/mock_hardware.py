@@ -21,7 +21,9 @@ class MockHardware:
     _CHANNEL_NOMINALS: ClassVar[dict[int, tuple[float, float, int]]] = {
         0: (5.0, 0.05, 3),    # 5 V rail, +/- ~50 mV jitter, 3 decimals
         1: (12.0, 0.10, 3),   # 12 V rail, +/- ~100 mV jitter
-        2: (1.2, 0.30, 3),    # 1.2 A current, wider jitter
+        2: (28.0, 0.20, 3),   # 28 V rail, +/- ~200 mV jitter
+        3: (1.2, 0.30, 3),    # 1.2 A current, wider jitter
+        10: (0.0, 0.05, 3),   # 0 V rail, +/- ~50 mV jitter
     }
     _OUT_OF_SPEC_PROB: ClassVar[float] = 0.25
 

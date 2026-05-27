@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from logic.models import TestRunRecord
+from paths import user_data_path
 
 
 class DatabaseManager:
@@ -18,9 +19,7 @@ class DatabaseManager:
     _ROLE_VALUES = ("Operator", "Technician", "Admin")
 
     def __init__(self, db_path: Path | None = None) -> None:
-        self._db_path = db_path or (
-            Path(__file__).resolve().parent.parent / "data" / "database.db"
-        )
+        self._db_path = db_path or user_data_path("database.db")
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._create_tables()
 
@@ -75,11 +74,21 @@ class DatabaseManager:
                 uut_type TEXT NOT NULL,
                 version_name TEXT NOT NULL,
                 test_content TEXT NOT NULL,
+                connection_params TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 created_by TEXT NOT NULL,
                 UNIQUE(test_name, version_name)
             );"""
             )
+            existing_cols = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(test_versions);").fetchall()
+            }
+            if "connection_params" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE test_versions "
+                    "ADD COLUMN connection_params TEXT NOT NULL DEFAULT '';"
+                )
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS audit_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -307,6 +316,7 @@ class DatabaseManager:
         version_name: str,
         content: str,
         created_by: str,
+        connection_params: str = "",
     ) -> int:
         name = test_name.strip()
         ver = version_name.strip()
@@ -316,10 +326,20 @@ class DatabaseManager:
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO test_versions (test_name, uut_type, version_name, test_content, created_at, created_by)
-                VALUES (?, ?, ?, ?, ?, ?);
+                INSERT INTO test_versions
+                    (test_name, uut_type, version_name, test_content,
+                     connection_params, created_at, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?);
                 """,
-                (name, uut_type.strip(), ver, content, now, created_by.strip()),
+                (
+                    name,
+                    uut_type.strip(),
+                    ver,
+                    content,
+                    connection_params.strip(),
+                    now,
+                    created_by.strip(),
+                ),
             )
             conn.commit()
             return int(cur.lastrowid)
@@ -328,7 +348,8 @@ class DatabaseManager:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, test_name, uut_type, version_name, created_at, created_by
+                SELECT id, test_name, uut_type, version_name,
+                       connection_params, created_at, created_by
                 FROM test_versions
                 ORDER BY created_at DESC, test_name COLLATE NOCASE ASC, version_name COLLATE NOCASE DESC;
                 """
@@ -339,6 +360,7 @@ class DatabaseManager:
                     "test_name": row["test_name"],
                     "uut_type": row["uut_type"],
                     "version_name": row["version_name"],
+                    "connection_params": str(row["connection_params"] or ""),
                     "created_at": row["created_at"],
                     "created_by": row["created_by"],
                 }
@@ -349,7 +371,8 @@ class DatabaseManager:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, test_name, uut_type, version_name, test_content, created_at, created_by
+                SELECT id, test_name, uut_type, version_name, test_content,
+                       connection_params, created_at, created_by
                 FROM test_versions WHERE id = ?;
                 """,
                 (version_id,),
@@ -362,6 +385,7 @@ class DatabaseManager:
                 "uut_type": row["uut_type"],
                 "version_name": row["version_name"],
                 "test_content": row["test_content"],
+                "connection_params": str(row["connection_params"] or ""),
                 "created_at": row["created_at"],
                 "created_by": row["created_by"],
             }

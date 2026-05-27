@@ -33,6 +33,8 @@ class TestRunnerThread(QThread):
     current_test = Signal(str)
     prompt_request = Signal(str)
     script_log = Signal(str)
+    # Emitted at the start of each loop iteration (1-based) when loop_count > 1.
+    loop_started = Signal(int, int)
 
     def __init__(
         self,
@@ -131,6 +133,14 @@ class TestRunnerThread(QThread):
                     self._emit_log("info", "Test execution aborted by user.")
                     break
 
+                loop_number = _loop + 1
+                if self._loop_count > 1:
+                    self.loop_started.emit(loop_number, self._loop_count)
+                    self._emit_log(
+                        "info",
+                        f"--- Loop {loop_number}/{self._loop_count} ---",
+                    )
+
                 for step in steps:
                     self._pause_event.wait()
                     if self._stop_requested:
@@ -174,7 +184,7 @@ class TestRunnerThread(QThread):
                     }
                     self.test_result.emit(step.name, dict(payload))
                     self._run_record.results.append(
-                        {"test_name": step.name, **dict(payload)}
+                        {"test_name": step.name, "loop": loop_number, **dict(payload)}
                     )
                     if self._secure_log is not None:
                         try:
@@ -337,6 +347,8 @@ class TestRunnerThread(QThread):
                     "unit": r.get("unit", ""),
                     "passed": bool(r.get("passed")),
                     "is_measurement": r.get("is_measurement", True),
+                    "loop": int(r.get("loop", 1)),
                 }
             )
+        meta["loop_count"] = self._loop_count
         return meta, rows

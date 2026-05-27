@@ -1,4 +1,4 @@
-# 🐦 DFX Tester - Component ATE
+# DFX Tester — Component ATE
 
 **Automated Test Equipment Framework for Component Validation**
 
@@ -6,80 +6,117 @@
 ![PySide6](https://img.shields.io/badge/UI-PySide6-green.svg)
 ![SQLite](https://img.shields.io/badge/Database-SQLite-lightgrey.svg)
 
-## 📝 About the Project
+## About the Project
 
-The **DFX Tester** is an advanced software framework designed for managing and executing automated testing on electronic components (ATE). The system supports dynamic script-based test sequences (`.tst` files), real-time data monitoring, professional engineering reporting, and built-in role-based security.
+The **DFX Tester** is an advanced software framework for managing and executing automated tests on electronic components (ATE). The system supports dynamic script-based test sequences (`.tst` files), real-time hardware trace monitoring, professional engineering PDF reporting, and built-in role-based security.
 
-> **Architecture Note:** This repository serves as the **Core Baseline Framework**. It is designed as a generic, modular foundation. Custom versions and branches will be derived from this core to meet specific hardware requirements, communication protocols, and unique client demands.
+> **Architecture Note:** This repository is the **Core Baseline Framework** — a generic, modular foundation. Custom versions and branches are derived from it to meet specific hardware requirements, communication protocols, and client demands.
 
 ---
 
-## 🔐 User Management & Permissions (RBAC)
+## User Management & Permissions (RBAC)
 
-To ensure operational safety and prevent human error on the production floor, the system features a strict Role-Based Access Control (RBAC) mechanism.
+To ensure operational safety on the production floor, the system uses strict Role-Based Access Control (RBAC).
 
-| Feature / Action                    |   Operator    | Engineer | Admin |
+| Feature / Action                    | Operator      | Engineer | Admin |
 | :---------------------------------- | :-----------: | :------: | :---: |
-| **Run Test Sequences**              |      ✅       |    ✅    |  ✅   |
-| **View Results (Pass/Fail)**        |      ✅       |    ✅    |  ✅   |
-| **View Technical Limits (Min/Max)** |      ❌       |    ✅    |  ✅   |
-| **Edit Test Scripts (.tst)**        |      ❌       |    ✅    |  ✅   |
-| **Export Full Detailed Reports**    | ❌ (Filtered) |    ✅    |  ✅   |
-| **User Management**                 |      ❌       |    ❌    |  ✅   |
+| Run Test Sequences                  | Yes           | Yes      | Yes   |
+| View Results (Pass/Fail)            | Yes           | Yes      | Yes   |
+| View Technical Limits (Min/Max)     | No            | Yes      | Yes   |
+| Edit Test Scripts (.tst)            | No            | Yes      | Yes   |
+| Export Full Detailed Reports        | No (Filtered) | Yes      | Yes   |
+| Manage Connection Parameters        | No            | No       | Yes   |
+| User Management                     | No            | No       | Yes   |
 
-### Role Breakdown:
+### Role Breakdown
 
-- **Operator:** Designed for daily production line use. The UI is simplified to show only final Pass/Fail outcomes. Technical limits (Min/Max) and script editing capabilities are hidden to prevent accidental configuration changes.
-- **Engineer:** Granted full access to engineering data. Can view all measurement limits, edit test sequences using the built-in script editor, and analyze comprehensive hardware logs.
-- **Admin:** Possesses all Engineer privileges, plus the ability to manage the system. Admins can create new users, modify roles, and enforce password resets via the User Management panel.
-
----
-
-## ✨ Key Features
-
-- **Script-Driven Execution:** Run dynamic test sequences without altering the application's source code.
-- **Dynamic HW Trace Log:** Detailed hardware execution log with real-time command filtering for debugging.
-- **Professional Reporting:** Export test results to CSV, JSON, and TXT. All exports include a standardized engineering header (Part Number, Serial Number, User, Timestamp).
-- **Security & Integrity:** PBKDF2-HMAC-SHA256 password hashing, forced password resets for new users, and single-instance file locking to prevent database corruption.
-- **Smart Metadata Parsing:** Automatically extracts metadata (e.g., `PartNum`) directly from the test script headers into the UI.
+- **Operator:** Simplified UI for production line use. Hardware trace log and Min/Max limits are hidden. End-of-run shows a large PASS/FAIL banner only.
+- **Engineer:** Full access to engineering data — limits, trace log, test script editing, and detailed PDF exports.
+- **Admin:** All Engineer privileges plus user management, connection parameter editing, and report archiving controls.
 
 ---
 
-## 🛠 Tech Stack
+## Key Features
+
+- **Script-Driven Execution:** Run dynamic test sequences from `.tst` files without touching source code.
+- **Loop-Aware Reporting:** Multi-loop test runs are grouped per loop in PDF reports.
+- **PDF Logo Branding:** Company logo (BirdLogo.png) is stamped on every page of generated PDF reports.
+- **Connection Parameters per Sequence:** Each test version stores its serial connection settings (`PORT|BAUD|PARITY|STOP_BITS`). Editable by Admins via the Version Manager.
+- **Dynamic Hardware Trace Log:** Real-time command log with filtering for in-session debugging (hidden from Operators).
+- **Role-Aware UI:** Trace log, test list actions, and save-log checkbox are shown or hidden based on the logged-in role.
+- **End-of-Run Result Dialog:** Full-screen PASS/FAIL modal shown at sequence completion.
+- **Security & Integrity:** PBKDF2-HMAC-SHA256 password hashing, forced password resets for new users, single-instance file locking.
+- **PyInstaller / Frozen App Support:** `paths.py` resolves bundled resources (`sys._MEIPASS`) and writable user data (next to the `.exe`) transparently in both dev and packaged modes.
+
+---
+
+## Tech Stack
 
 - **Core Logic:** Python 3.x
 - **GUI / Frontend:** PySide6 (Qt for Python)
-- **Database:** SQLite 3
-- **Security:** `hashlib`, `secrets`, `ctypes` (for Windows PID locking)
-- **Styling:** Qt Style Sheets (QSS) with custom Dark/Light themes
+- **Database:** SQLite 3 (with live schema migration for new columns)
+- **PDF Engine:** ReportLab + PyPDF2 (watermark stamping)
+- **Serial Communication:** pyserial (optional, used for connection param enumeration)
+- **Security:** `hashlib`, `secrets`, `ctypes` (Windows PID locking)
+- **Styling:** Qt Style Sheets (QSS) — Dark and Light themes
+- **Packaging:** PyInstaller (`DFX_Tester.spec` + `build.ps1`)
 
 ---
 
-## 🚀 Setup and Installation
+## Setup and Installation
 
-1. Install the required dependencies:
+1. Install required dependencies:
 
    ```bash
-   pip install PySide6
-
-   Launch the application:
-   python src/main.py
-
-
-   ### Default Credentials (Admin):
-   Upon the first run, the database will automatically initialize with a default administrator account:
+   pip install PySide6 reportlab pypdf2 pyserial
    ```
+
+2. Launch the application:
+
+   ```bash
+   python src/main.py
+   ```
+
+### Default Credentials (Admin)
+
+On first run the database is auto-initialized with a default administrator account:
 
 - **Username:** `lior`
 - **Password:** `XXXXXXX`
 
 ---
 
-## 📁 Directory Structure
+## Building a Standalone Executable
 
-- `src/logic/`: Core application logic, test engine threads, and database management.
-- `src/ui/`: PySide6 views, custom widgets, dialogs, and QSS themes.
-- `src/data/`: Test script files (`.tst`) and local database storage.
-- `src/assets/`: Application icons and graphical assets.
+A PyInstaller spec and build script are included:
+
+```powershell
+# From the repo root
+.\build.ps1
+```
+
+The output `dist/DFX_Tester.exe` is self-contained. Writable data (database, logs, reports) is stored next to the `.exe`; bundled read-only assets are unpacked to `sys._MEIPASS` at runtime.
 
 ---
+
+## Directory Structure
+
+```
+src/
+  logic/          — Core logic: test engine, DB manager, report generator, limits, scripts
+  ui/
+    views/        — PySide6 dialogs and windows (main window, login, version manager, …)
+    widgets/      — Reusable widgets (control panel, instrument panel, row delegate)
+    assets/       — QSS themes (dark_theme.qss, light_theme.qss) and icons
+  data/           — Test script files (.tst) and local database
+  paths.py        — Path resolution for dev and frozen (PyInstaller) environments
+  main.py         — Application entry point
+DFX_Tester.spec   — PyInstaller build spec
+build.ps1         — PowerShell build script
+```
+
+---
+
+## Database Schema Notes
+
+The `test_versions` table includes a `connection_params` column (added via live `ALTER TABLE` migration on first run after upgrade). Format: `PORT|BAUD|PARITY|STOP_BITS` (e.g. `COM3|115200|N|1`). Empty string means "use defaults".

@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 
 from logic.models import ScriptDocument, TestStep
+from paths import user_data_path
 
 
 class ScriptParseError(ValueError):
@@ -35,9 +36,7 @@ class ScriptManager:
 
     def __init__(self, scripts_dir: Path | None = None) -> None:
         self._scripts_dir: Path = (
-            scripts_dir
-            if scripts_dir is not None
-            else Path(__file__).resolve().parent.parent / "data"
+            scripts_dir if scripts_dir is not None else user_data_path()
         )
 
     @property

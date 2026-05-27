@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QProgressBar,
     QPushButton,
@@ -18,25 +19,45 @@ from PySide6.QtWidgets import (
 )
 
 
+def _make_form(parent: QWidget) -> QFormLayout:
+    """Compact QFormLayout with tight vertical spacing for sidebar use."""
+    form = QFormLayout(parent)
+    form.setContentsMargins(6, 6, 6, 6)
+    form.setVerticalSpacing(3)
+    form.setHorizontalSpacing(6)
+    form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    return form
+
+
 class ControlPanelWidget(QWidget):
     def __init__(self, user_info: dict, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        root = QVBoxLayout(self)
-        root.setSpacing(4)
+        self._root_layout = QVBoxLayout(self)
+        root = self._root_layout
+        root.setSpacing(3)
         root.setContentsMargins(4, 4, 4, 4)
 
         self.btn_start = QPushButton("Start")
         self.btn_start.setObjectName("btn_start")
-        self.btn_start.setMinimumHeight(40)
+        self.btn_start.setMinimumHeight(32)
         root.addWidget(self.btn_start)
 
         self.btn_stop = QPushButton("Stop")
         self.btn_stop.setObjectName("btn_stop")
+        self.btn_stop.setMinimumHeight(26)
         root.addWidget(self.btn_stop)
 
-        user_box = QGroupBox("User")
-        user_box.setObjectName("grp_user")
-        user_form = QFormLayout(user_box)
+        self.chk_save_log = QCheckBox("Save as log")
+        self.chk_save_log.setObjectName("chk_save_log")
+        self.chk_save_log.setChecked(True)
+        self.chk_save_log.setToolTip(
+            "When checked, the sequence PDF report is archived at end-of-run."
+        )
+        root.addWidget(self.chk_save_log)
+
+        self.user_box = QGroupBox("User")
+        self.user_box.setObjectName("grp_user")
+        user_form = _make_form(self.user_box)
         self.edit_user_name = QLineEdit()
         self.edit_user_name.setReadOnly(True)
         self.edit_user_name.setText(str(user_info.get("name", "")))
@@ -45,11 +66,11 @@ class ControlPanelWidget(QWidget):
         self.edit_user_level.setReadOnly(True)
         self.edit_user_level.setText(str(user_info.get("role", "")))
         user_form.addRow("Level", self.edit_user_level)
-        root.addWidget(user_box)
+        root.addWidget(self.user_box)
 
         unit_box = QGroupBox("Unit")
         unit_box.setObjectName("grp_unit")
-        unit_form = QFormLayout(unit_box)
+        unit_form = _make_form(unit_box)
         self.edit_uut_type = QLineEdit()
         self.edit_uut_type.setReadOnly(True)
         self.edit_uut_type.setPlaceholderText("—")
@@ -63,50 +84,61 @@ class ControlPanelWidget(QWidget):
         status_box = QGroupBox("Status")
         status_box.setObjectName("grp_status")
         status_layout = QVBoxLayout(status_box)
+        status_layout.setContentsMargins(6, 6, 6, 6)
+        status_layout.setSpacing(4)
+
+        status_form = QFormLayout()
+        status_form.setContentsMargins(0, 0, 0, 0)
+        status_form.setVerticalSpacing(3)
+        status_form.setHorizontalSpacing(6)
+        status_form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         self.edit_current_test = QLineEdit()
         self.edit_current_test.setReadOnly(True)
         self.edit_current_test.setPlaceholderText("—")
-        status_layout.addWidget(QLabel("Current test"))
-        status_layout.addWidget(self.edit_current_test)
+        status_form.addRow("Current", self.edit_current_test)
 
-        status_layout.addWidget(QLabel("Test progress"))
         self.progress_test = QProgressBar()
-        status_layout.addWidget(self.progress_test)
+        self.progress_test.setMaximumHeight(16)
+        status_form.addRow("Test", self.progress_test)
 
-        status_layout.addWidget(QLabel("Total progress"))
         self.progress_total = QProgressBar()
-        status_layout.addWidget(self.progress_total)
+        self.progress_total.setMaximumHeight(16)
+        status_form.addRow("Total", self.progress_total)
+        status_layout.addLayout(status_form)
 
         counters = QHBoxLayout()
+        counters.setSpacing(4)
         self.label_pass = QLabel("PASS: 0")
         self.label_pass.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label_pass.setStyleSheet(
             "background-color: #22c55e; color: white; font-weight: bold; "
-            "padding: 4px; border-radius: 4px;"
+            "padding: 3px; border-radius: 4px;"
         )
         self.label_fail = QLabel("FAIL: 0")
         self.label_fail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label_fail.setStyleSheet(
             "background-color: #ef4444; color: white; font-weight: bold; "
-            "padding: 4px; border-radius: 4px;"
+            "padding: 3px; border-radius: 4px;"
         )
         counters.addWidget(self.label_pass)
         counters.addWidget(self.label_fail)
         status_layout.addLayout(counters)
 
         loops_row = QHBoxLayout()
+        loops_row.setSpacing(4)
         loops_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         self.chk_loops = QCheckBox("Loops")
         self.spin_loops = QSpinBox()
         self.spin_loops.setMinimum(1)
         self.spin_loops.setMaximum(999)
         self.spin_loops.setValue(1)
-        self.spin_loops.setMinimumWidth(72)
-        self.spin_loops.setMinimumHeight(28)
+        self.spin_loops.setMinimumWidth(64)
         self.spin_loops.setEnabled(False)
         self.chk_loops.toggled.connect(self.spin_loops.setEnabled)
         loops_row.addWidget(self.chk_loops, 0, Qt.AlignmentFlag.AlignVCenter)
-        loops_row.addWidget(self.spin_loops, 0, Qt.AlignmentFlag.AlignVCenter)
+        loops_row.addWidget(self.spin_loops, 1, Qt.AlignmentFlag.AlignVCenter)
         status_layout.addLayout(loops_row)
 
         self.chk_stop_on_fail = QCheckBox("Stop on fail")
@@ -114,3 +146,13 @@ class ControlPanelWidget(QWidget):
 
         root.addWidget(status_box)
         root.addStretch()
+
+    def take_user_box(self) -> QGroupBox:
+        """Detach the User QGroupBox so MainWindow can re-parent it into the left sidebar.
+
+        Safe to call exactly once. The QLineEdit children (edit_user_name,
+        edit_user_level) remain attributes of this widget for callers.
+        """
+        self._root_layout.removeWidget(self.user_box)
+        self.user_box.setParent(None)
+        return self.user_box

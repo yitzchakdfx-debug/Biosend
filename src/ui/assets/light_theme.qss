@@ -4,13 +4,13 @@
 
 /* --- 1. Base Elements (Backgrounds & Text) --- */
 QMainWindow, QDialog { 
-    background-color: #f0f4f8; 
+    background-color: #dde3ea; 
 }
 
-QWidget { 
-    color: #1e293b; 
-    font-family: "Segoe UI", Arial, sans-serif; 
-    font-size: 9pt;
+QWidget {
+    color: #1e293b;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 11pt;
 }
 
 QLabel { 
@@ -20,7 +20,7 @@ QLabel {
 
 /* --- 2. Top Menu Bar (NEW FIX) --- */
 QMenuBar {
-    background-color: #f0f4f8;
+    background-color: #dde3ea;
     color: #1e293b;
     border-bottom: 1px solid #cbd5e1;
 }
@@ -95,7 +95,7 @@ QHeaderView::section {
     background-color: #e2e8f0;
     color: #1e293b;
     font-family: "Segoe UI", Arial, sans-serif;
-    font-size: 9pt;
+    font-size: 11pt;
     font-weight: bold;
     border: none;
     padding: 6px;
@@ -123,7 +123,7 @@ QTextEdit, QPlainTextEdit {
     background-color: #ffffff;
     color: #334155;
     font-family: Consolas, "Courier New", monospace;
-    font-size: 9pt;
+    font-size: 11pt;
     border: 1px solid #cbd5e1;
     border-radius: 4px;
     padding: 5px;
@@ -246,21 +246,21 @@ QDateEdit::down-arrow {
 }
 
 /* --- 5. Buttons --- */
-QPushButton { 
-    background-color: #3b82f6; 
-    color: white; 
-    border: none; 
-    border-radius: 4px; 
-    padding: 10px; 
-    font-weight: bold; 
-    font-size: 10pt;
+QPushButton {
+    background-color: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 10px;
+    font-weight: bold;
+    font-size: 12pt;
 }
 QPushButton:hover { background-color: #2563eb; }
 QPushButton:disabled { background-color: #94a3b8; color: #e2e8f0; }
 
 QPushButton#btn_start, QPushButton#btn_stop, QPushButton#btn_pause {
     padding: 6px;
-    font-size: 11pt;
+    font-size: 13pt;
 }
 
 QPushButton#btn_stop { background-color: #ef4444; }
@@ -302,6 +302,12 @@ QWidget#control_panel {
     border-radius: 4px;
 }
 
+QScrollArea#right_panel_scroll,
+QWidget#right_panel_contents {
+    background-color: transparent;
+    border: none;
+}
+
 QGroupBox { 
     border: 1px solid #cbd5e1; 
     border-radius: 4px; 
@@ -315,14 +321,14 @@ QGroupBox::title {
     padding: 0 3px; 
 }
 
-QProgressBar { 
-    border: 1px solid #cbd5e1; 
-    border-radius: 4px; 
-    text-align: center; 
-    color: #1e293b; 
+QProgressBar {
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    text-align: center;
+    color: #1e293b;
     background-color: #ffffff;
-    min-height: 14px;
-    font-size: 8pt;
+    min-height: 18px;
+    font-size: 10pt;
 }
 QProgressBar::chunk { 
     background-color: #3b82f6; 
@@ -341,9 +347,9 @@ QGroupBox#grp_user QLabel, QGroupBox#grp_unit QLabel, QGroupBox#grp_status QLabe
 QGroupBox#grp_user QLineEdit, QGroupBox#grp_unit QLineEdit,
 QGroupBox#grp_status QLineEdit,
 QComboBox {
-    font-size: 9pt;
+    font-size: 11pt;
     padding: 2px 4px;
-    min-height: 20px;
+    min-height: 26px;
 }
 
 /* Combo: visible down-arrow + popup (Role combo in dialogs and control rail) */
@@ -365,12 +371,12 @@ QComboBox::down-arrow {
 }
 
 /* --- 7. Scrollbars --- */
-QScrollBar:vertical { background: #f0f4f8; width: 12px; border: none; }
+QScrollBar:vertical { background: #dde3ea; width: 12px; border: none; }
 QScrollBar::handle:vertical { background: #cbd5e1; border-radius: 6px; min-height: 24px; }
 QScrollBar::handle:vertical:hover { background: #94a3b8; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 
-QScrollBar:horizontal { background: #f0f4f8; height: 12px; border: none; }
+QScrollBar:horizontal { background: #dde3ea; height: 12px; border: none; }
 QScrollBar::handle:horizontal { background: #cbd5e1; border-radius: 6px; min-width: 24px; }
 QScrollBar::handle:horizontal:hover { background: #94a3b8; }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
@@ -384,7 +390,7 @@ QWidget#instrument_panel {
 }
 QLabel#instrument_panel_title {
     color: #64748b;
-    font-size: 10pt;
+    font-size: 12pt;
 }
 QFrame#readout_row {
     background-color: #f1f5f9;
@@ -395,7 +401,7 @@ QFrame#readout_row {
 QLabel#readout_value_V,
 QLabel#readout_value_A {
     font-family: Consolas, "Courier New", monospace;
-    font-size: 12pt;
+    font-size: 14pt;
     font-weight: bold;
 }
 QLabel#readout_value_V { color: #0284c7; }
@@ -457,7 +463,7 @@ QCalendarWidget QToolButton#qt_calendar_nextmonth {
     min-height: 28px;
     border-radius: 14px;
     font-weight: bold;
-    font-size: 10pt;
+    font-size: 12pt;
 }
 
 /* The actual days grid */
@@ -466,7 +472,7 @@ QCalendarWidget QAbstractItemView:enabled {
     color: #1e293b;
     selection-background-color: #3b82f6;
     selection-color: #ffffff;
-    font-size: 10pt;
+    font-size: 12pt;
     outline: none;
 }
 QCalendarWidget QAbstractItemView:disabled {

@@ -18,23 +18,26 @@ if str(_SRC) not in sys.path:
 from ui.views.login_dialog import LoginDialog
 from ui.views.main_window import MainWindow
 from logic.file_lock import AlreadyRunningError, SingleInstanceLock
+from paths import ensure_user_data_seeded, resource_path, user_data_path
 
 
 def main() -> int:
     try:
-        myappid = 'mycompany.dfxtester.ate.v1' 
+        myappid = 'mycompany.dfxtester.ate.v1'
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     except Exception as e:
         print(f"Note: Could not set AppUserModelID: {e}")
 
+    ensure_user_data_seeded()
+
     app = QApplication(sys.argv)
-    icon_path = Path(__file__).resolve().parent / "ui" / "assets" / "icons" / "BirdAppIcon.png"
+    icon_path = resource_path("ui", "assets", "icons", "BirdAppIcon.png")
     if icon_path.is_file():
         app.setWindowIcon(QIcon(str(icon_path)))
     else:
-        print(f"Warning: Icon not found at {icon_path}") 
-    
-    lock_path = Path(__file__).resolve().parent / "data" / "app.lock"
+        print(f"Warning: Icon not found at {icon_path}")
+
+    lock_path = user_data_path("app.lock")
     lock = SingleInstanceLock(lock_path)
     try:
         lock.acquire()

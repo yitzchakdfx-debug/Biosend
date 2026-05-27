@@ -120,6 +120,7 @@ def get_secure_logger() -> SecureLogger:
     """Process-wide singleton for encrypted system logs."""
     global _logger_singleton
     if _logger_singleton is None:
-        path = Path(__file__).resolve().parent.parent / "data" / "logs"
+        from paths import user_data_path
+        path = user_data_path("logs")
         _logger_singleton = SecureLogger(path, LOG_ENCRYPTION_PASSWORD)
     return _logger_singleton

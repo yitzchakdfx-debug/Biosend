@@ -6,15 +6,14 @@ import json
 from pathlib import Path
 
 from logic.models import TestLimit
+from paths import user_data_path
 
 
 class LimitManager:
     """Data-driven limits keyed by exact test name."""
 
     def __init__(self, limits_path: Path | None = None) -> None:
-        path = limits_path or (
-            Path(__file__).resolve().parent.parent / "data" / "limits.json"
-        )
+        path = limits_path or user_data_path("limits.json")
         self._limits: dict[str, TestLimit] = self._load(path)
 
     def _load(self, path: Path) -> dict[str, TestLimit]:

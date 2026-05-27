@@ -7,13 +7,14 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtCore import QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QDialog,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -22,6 +23,8 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSplitter,
     QStyle,
@@ -41,14 +44,17 @@ from logic.report_generator import ReportGenerator
 from logic.script_manager import ScriptManager, ScriptParseError
 from logic.secure_logger import get_secure_logger
 from logic.test_engine import TestRunnerThread
+from paths import resource_path, user_data_path
 from ui.views.audit_viewer_dialog import AuditViewerDialog
 from ui.views.pre_test_dialog import PreTestDialog
 from ui.views.select_test_dialog import SelectTestDialog
 from ui.views.sequence_editor_dialog import SequenceEditorDialog
+from ui.views.test_result_dialog import TestResultDialog
 from ui.views.user_management_dialog import UserManagementDialog
 from ui.views.version_manager_dialog import VersionManagerDialog
 from ui.widgets.control_panel import ControlPanelWidget
 from ui.widgets.instrument_panel import InstrumentPanelWidget
+from ui.widgets.result_row_delegate import ResultRowDelegate
 from version import __version__
 
 
@@ -62,8 +68,10 @@ def _format_measurement(value: float) -> str:
 
 
 class MainWindow(QMainWindow):
-    _ICONS_DIR = Path(__file__).resolve().parents[1] / "assets" / "icons"
-    _RESULTS_DIR = Path(__file__).resolve().parents[2] / "data" / "results"
+    _ICONS_DIR = resource_path("ui", "assets", "icons")
+    _RESULTS_DIR = user_data_path("results")
+
+    sequence_finished = Signal(bool)
 
     def __init__(self, user_info: dict) -> None:
         super().__init__()
@@ -108,6 +116,7 @@ class MainWindow(QMainWindow):
             self._catalog_uut_type = ""
         else:
             self._reload_script_into_list()
+        self._fit_initial_size_to_screen()
 
     def _make_ribbon_button(self, object_name: str, text: str) -> QToolButton:
         btn = QToolButton()
@@ -206,6 +215,18 @@ class MainWindow(QMainWindow):
             self.btn_edit_sequence.hide()
         else:
             self.btn_edit_sequence.show()
+
+        if self._is_operator():
+            self.trace_container.hide()
+        else:
+            self.trace_container.show()
+
+        self.control_panel.chk_save_log.setVisible(self._is_admin())
+
+        list_actions_visible = not self._is_operator()
+        self.btn_select_all_tests.setVisible(list_actions_visible)
+        self.btn_clear_all_tests.setVisible(list_actions_visible)
+        self.btn_default_tests.setVisible(list_actions_visible)
 
     def open_version_manager(self) -> None:
         if not self._is_admin():
@@ -425,6 +446,27 @@ class MainWindow(QMainWindow):
 
         ribbon.addStretch()
 
+        self.lbl_brand_icon = QLabel()
+        self.lbl_brand_icon.setObjectName("brand_icon")
+        self.lbl_brand_icon.setFixedSize(220, 64)
+        self.lbl_brand_icon.setScaledContents(False)
+        self.lbl_brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_brand_icon.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
+        bird_path = self._ICONS_DIR / "BirdLogo.png"
+        if bird_path.is_file():
+            pix = QPixmap(str(bird_path)).scaled(
+                self.lbl_brand_icon.width(),
+                self.lbl_brand_icon.height(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self.lbl_brand_icon.setPixmap(pix)
+        self.lbl_brand_icon.setToolTip("DFX Tester")
+        ribbon.addWidget(self.lbl_brand_icon, 0, Qt.AlignmentFlag.AlignVCenter)
+        ribbon.addSpacing(12)
+
         self.btn_logout = self._make_ribbon_button("btn_logout", "Log Out")
         self.btn_logout.clicked.connect(self.logout)
         ribbon.addWidget(self.btn_logout)
@@ -439,6 +481,14 @@ class MainWindow(QMainWindow):
         main_row.setContentsMargins(0, 0, 0, 0)
         main_row.setSpacing(8)
 
+        self.control_panel = ControlPanelWidget(self._user_info)
+        self.control_panel.setObjectName("control_panel")
+        self.control_panel.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding
+        )
+        self.control_panel.setMinimumWidth(280)
+        self.control_panel.setMaximumWidth(340)
+
         self.test_list = QListWidget()
         self.test_list.setObjectName("test_list")
         self.test_list.setSizePolicy(
@@ -447,15 +497,38 @@ class MainWindow(QMainWindow):
         self.test_list.setItemAlignment(Qt.AlignmentFlag.AlignTop)
 
         self.left_sidebar = QWidget()
-        self.left_sidebar.setMinimumWidth(200)
-        self.left_sidebar.setMaximumWidth(280)
+        self.left_sidebar.setMinimumWidth(220)
+        self.left_sidebar.setMaximumWidth(340)
         sidebar_layout = QVBoxLayout(self.left_sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setSpacing(8)
+
+        sidebar_layout.addWidget(self.control_panel.take_user_box())
+
         self.lbl_test_cases = QLabel("Test Cases")
         self.lbl_test_cases.setObjectName("lbl_test_cases")
         sidebar_layout.addWidget(self.lbl_test_cases)
         sidebar_layout.addWidget(self.test_list, stretch=1)
+
+        test_list_actions = QHBoxLayout()
+        test_list_actions.setSpacing(4)
+        test_list_actions.setContentsMargins(0, 0, 0, 0)
+        self.btn_select_all_tests = QPushButton("Select All")
+        self.btn_select_all_tests.setObjectName("btn_select_all_tests")
+        self.btn_select_all_tests.setMinimumHeight(26)
+        self.btn_select_all_tests.clicked.connect(self._on_select_all_tests)
+        self.btn_clear_all_tests = QPushButton("Clear All")
+        self.btn_clear_all_tests.setObjectName("btn_clear_all_tests")
+        self.btn_clear_all_tests.setMinimumHeight(26)
+        self.btn_clear_all_tests.clicked.connect(self._on_clear_all_tests)
+        self.btn_default_tests = QPushButton("Default")
+        self.btn_default_tests.setObjectName("btn_default_tests")
+        self.btn_default_tests.setMinimumHeight(26)
+        self.btn_default_tests.clicked.connect(self._on_restore_default_tests)
+        test_list_actions.addWidget(self.btn_select_all_tests)
+        test_list_actions.addWidget(self.btn_clear_all_tests)
+        test_list_actions.addWidget(self.btn_default_tests)
+        sidebar_layout.addLayout(test_list_actions)
 
         results_table_container = QWidget()
         center_layout = QVBoxLayout(results_table_container)
@@ -495,6 +568,9 @@ class MainWindow(QMainWindow):
         self.results_table.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
+        self.results_table.setItemDelegateForColumn(
+            4, ResultRowDelegate(self.results_table)
+        )
         center_layout.addWidget(self.results_table, stretch=1)
 
         self.trace_log = QTextEdit()
@@ -531,8 +607,8 @@ class MainWindow(QMainWindow):
         self.chk_display_cmds.toggled.connect(self._refresh_trace_display)
         log_bar.addWidget(self.chk_display_cmds)
 
-        trace_container = QWidget()
-        trace_layout = QVBoxLayout(trace_container)
+        self.trace_container = QWidget()
+        trace_layout = QVBoxLayout(self.trace_container)
         trace_layout.setContentsMargins(0, 0, 0, 0)
         trace_layout.addLayout(log_bar)
         trace_layout.addWidget(self.trace_log)
@@ -540,7 +616,7 @@ class MainWindow(QMainWindow):
         v_splitter = QSplitter(Qt.Vertical)
         v_splitter.setObjectName("center_splitter")
         v_splitter.addWidget(results_table_container)
-        v_splitter.addWidget(trace_container)
+        v_splitter.addWidget(self.trace_container)
         v_splitter.setStretchFactor(0, 7)
         v_splitter.setStretchFactor(1, 3)
         v_splitter.setSizes([700, 300])
@@ -548,13 +624,6 @@ class MainWindow(QMainWindow):
         v_splitter.setCollapsible(1, False)
         v_splitter.setHandleWidth(4)
 
-        self.control_panel = ControlPanelWidget(self._user_info)
-        self.control_panel.setObjectName("control_panel")
-        self.control_panel.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding
-        )
-        self.control_panel.setMinimumWidth(280)
-        self.control_panel.setMaximumWidth(340)
         self.control_panel.btn_start.clicked.connect(self._on_start_clicked)
         self.control_panel.btn_stop.clicked.connect(self.stop_tests)
         self.control_panel.edit_part_number.textEdited.connect(
@@ -562,6 +631,7 @@ class MainWindow(QMainWindow):
         )
 
         right_panel = QWidget()
+        right_panel.setObjectName("right_panel_contents")
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(2)
@@ -570,11 +640,40 @@ class MainWindow(QMainWindow):
             right_layout.addWidget(self.instrument_panel, stretch=0)
         right_layout.addWidget(self.control_panel, stretch=1)
 
+        right_scroll = QScrollArea()
+        right_scroll.setObjectName("right_panel_scroll")
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        right_scroll.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+        )
+        right_scroll.setMinimumWidth(340)
+        right_scroll.setMaximumWidth(420)
+        right_scroll.setWidget(right_panel)
+
         main_row.addWidget(self.left_sidebar)
         main_row.addWidget(v_splitter, stretch=1)
-        main_row.addWidget(right_panel)
+        main_row.addWidget(right_scroll)
 
         main_layout.addLayout(main_row, stretch=1)
+
+        self.sequence_finished.connect(self._show_result_dialog)
+
+    def _fit_initial_size_to_screen(self) -> None:
+        """Keep the first show inside the usable desktop area on scaled displays."""
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            self.resize(1200, 800)
+            return
+
+        available = screen.availableGeometry()
+        margin = 24
+        min_size = self.minimumSizeHint()
+        width = min(1200, max(min_size.width(), available.width() - margin))
+        height = min(800, max(min_size.height(), available.height() - margin))
+        self.resize(width, height)
 
     def _filter_table_results(self, text: str) -> None:
         needle = text.strip().lower()
@@ -591,7 +690,7 @@ class MainWindow(QMainWindow):
 
     def _theme_path(self) -> Path:
         name = "dark_theme.qss" if self.is_dark_mode else "light_theme.qss"
-        return Path(__file__).resolve().parents[1] / "assets" / name
+        return resource_path("ui", "assets", name)
 
     def _apply_theme_file(self) -> None:
         path = self._theme_path()
@@ -652,6 +751,9 @@ class MainWindow(QMainWindow):
             meta["test_program_name"] = logical_name
             self._last_run_meta = meta
             self._last_run_rows = list(rows)
+            if not self.control_panel.chk_save_log.isChecked():
+                self.append_trace("Save as log disabled — skipping PDF archive.")
+                return
             pdf_path = ReportGenerator().generate_pdf_auto_archive(
                 meta, rows, self._current_role()
             )
@@ -891,6 +993,7 @@ class MainWindow(QMainWindow):
         )
         self.test_thread.log_msg.connect(self.append_trace)
         self.test_thread.test_result.connect(self.update_results_table)
+        self.test_thread.loop_started.connect(self._on_loop_started)
         self.test_thread.progress_total.connect(self.control_panel.progress_total.setValue)
         self.test_thread.progress_test.connect(self.control_panel.progress_test.setValue)
         self.test_thread.current_test.connect(self.control_panel.edit_current_test.setText)
@@ -1016,6 +1119,23 @@ class MainWindow(QMainWindow):
             self.monitor_thread.stop()
         super().closeEvent(event)
 
+    def _on_loop_started(self, loop_number: int, loop_total: int) -> None:
+        """Insert a visual separator row before each new loop iteration."""
+        col_count = self.results_table.columnCount()
+        row = self.results_table.rowCount()
+        self.results_table.insertRow(row)
+        self.results_table.setSpan(row, 0, 1, col_count)
+
+        item = QTableWidgetItem(f"──  Loop {loop_number} of {loop_total}  ──")
+        font = QFont()
+        font.setBold(True)
+        item.setFont(font)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item.setBackground(QBrush(QColor("#2f65ca")))
+        item.setForeground(QBrush(QColor("white")))
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        self.results_table.setItem(row, 0, item)
+
     def update_results_table(self, test_name: str, result: TestResultPayload) -> None:
         row = self.results_table.rowCount()
         self.results_table.insertRow(row)
@@ -1042,7 +1162,7 @@ class MainWindow(QMainWindow):
         self.results_table.setItem(row, 3, QTableWidgetItem(max_str))
 
         status_item = QTableWidgetItem(status)
-        status_item.setForeground(Qt.GlobalColor.green if passed else Qt.GlobalColor.red)
+        status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.results_table.setItem(row, 4, status_item)
 
         if passed:
@@ -1064,11 +1184,15 @@ class MainWindow(QMainWindow):
 
         self.append_trace("Sequence Complete.")
 
+        overall_passed = False
         try:
             self._finalize_run_reports()
         finally:
             try:
                 meta, _rows = th.report_snapshot()
+                overall_passed = (
+                    str(meta.get("overall_result", "")).strip().upper() == "PASS"
+                )
                 DatabaseManager().log_audit_action(
                     "Test run completed",
                     username=str(self._user_info.get("username", "")),
@@ -1089,3 +1213,23 @@ class MainWindow(QMainWindow):
             self.control_panel.edit_part_number.setReadOnly(True)
         self._unlock_pre_test_fields()
         self.test_thread = None
+
+        self.sequence_finished.emit(overall_passed)
+
+    def _show_result_dialog(self, passed: bool) -> None:
+        TestResultDialog(passed, parent=self).exec()
+
+    def _on_select_all_tests(self) -> None:
+        for i in range(self.test_list.count()):
+            item = self.test_list.item(i)
+            if item is not None:
+                item.setCheckState(Qt.CheckState.Checked)
+
+    def _on_clear_all_tests(self) -> None:
+        for i in range(self.test_list.count()):
+            item = self.test_list.item(i)
+            if item is not None:
+                item.setCheckState(Qt.CheckState.Unchecked)
+
+    def _on_restore_default_tests(self) -> None:
+        self._on_select_all_tests()

@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from config import UUT_TYPES
 from logic.database_manager import DatabaseManager
 from logic.script_manager import ScriptManager
+from ui.views.connection_settings_form import ConnectionSettingsForm
 from ui.views.script_editor import ScriptEditorDialog
 
 
@@ -89,9 +90,16 @@ class VersionManagerDialog(QDialog):
         root = QVBoxLayout(self)
         root.addWidget(QLabel("Imported and saved sequences (Admin only)."))
 
-        self._table = QTableWidget(0, 5)
+        self._table = QTableWidget(0, 6)
         self._table.setHorizontalHeaderLabels(
-            ["Test Name", "UUT Type", "Version", "Creator", "Created"]
+            [
+                "Test Name",
+                "UUT Type",
+                "Version",
+                "Connection Params",
+                "Creator",
+                "Created",
+            ]
         )
         self._table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
@@ -113,6 +121,9 @@ class VersionManagerDialog(QDialog):
         self._btn_edit = QPushButton("Edit")
         self._btn_edit.clicked.connect(self._edit)
         row.addWidget(self._btn_edit)
+        self._btn_edit_conn = QPushButton("Edit Connection")
+        self._btn_edit_conn.clicked.connect(self._edit_connection_params)
+        row.addWidget(self._btn_edit_conn)
         self._btn_delete = QPushButton("Delete")
         self._btn_delete.clicked.connect(self._delete)
         row.addWidget(self._btn_delete)
@@ -152,8 +163,11 @@ class VersionManagerDialog(QDialog):
             self._table.setItem(i, 0, c0)
             self._table.setItem(i, 1, QTableWidgetItem(str(r["uut_type"])))
             self._table.setItem(i, 2, QTableWidgetItem(str(r["version_name"])))
-            self._table.setItem(i, 3, QTableWidgetItem(str(r["created_by"])))
-            self._table.setItem(i, 4, QTableWidgetItem(str(r["created_at"])))
+            self._table.setItem(
+                i, 3, QTableWidgetItem(str(r.get("connection_params", "") or ""))
+            )
+            self._table.setItem(i, 4, QTableWidgetItem(str(r["created_by"])))
+            self._table.setItem(i, 5, QTableWidgetItem(str(r["created_at"])))
 
     def _import_tst(self) -> None:
         path_str, _ = QFileDialog.getOpenFileName(
@@ -255,9 +269,20 @@ class VersionManagerDialog(QDialog):
                 f"Version {new_ver!r} already exists for test {test_name!r}.",
             )
             return
+        prior_conn = ""
+        prior_id = self._selected_id()
+        if prior_id is not None:
+            prior = self._db.get_test_version(prior_id)
+            if prior is not None:
+                prior_conn = str(prior.get("connection_params", "") or "")
         try:
             self._db.add_test_version(
-                test_name, uut_type, new_ver, raw, self._user
+                test_name,
+                uut_type,
+                new_ver,
+                raw,
+                self._user,
+                connection_params=prior_conn,
             )
         except Exception as exc:
             QMessageBox.warning(self, "Update Failed", str(exc))
@@ -361,7 +386,14 @@ class VersionManagerDialog(QDialog):
             )
             return
         try:
-            self._db.add_test_version(tname, uut, new_ver, body, self._user)
+            self._db.add_test_version(
+                tname,
+                uut,
+                new_ver,
+                body,
+                self._user,
+                connection_params=str(rec.get("connection_params", "") or ""),
+            )
         except Exception as exc:
             QMessageBox.warning(self, "Save Failed", str(exc))
             return
@@ -377,6 +409,73 @@ class VersionManagerDialog(QDialog):
         self._populate()
         QMessageBox.information(
             self, "Saved", f"Stored new version {new_ver!r} for {tname!r}."
+        )
+
+    def _edit_connection_params(self) -> None:
+        """Create a new auto-versioned row that updates the connection params string."""
+        vid = self._selected_id()
+        if vid is None:
+            QMessageBox.information(
+                self, "Edit Connection", "Select a version first."
+            )
+            return
+        rec = self._db.get_test_version(vid)
+        if rec is None:
+            self._populate()
+            return
+        tname = str(rec["test_name"]).strip()
+        uut = str(rec["uut_type"]).strip()
+        current = str(rec.get("connection_params", "") or "")
+
+        form = ConnectionSettingsForm(
+            parent=self,
+            subtitle=(
+                f"Connection parameters for {tname!r} "
+                f"(from {rec['version_name']!r}). "
+                "Saving creates a new auto-incremented version; the selected row is preserved."
+            ),
+        )
+        form.populate_form_from_db(current)
+        if form.exec() != QDialog.DialogCode.Accepted:
+            return
+        new_params = form.get_form_as_db_string()
+        if new_params == current:
+            QMessageBox.information(
+                self,
+                "Edit Connection",
+                "Connection parameters unchanged — no new version created.",
+            )
+            return
+        new_ver = _next_import_version_name(self._db, tname)
+        try:
+            self._db.add_test_version(
+                tname,
+                uut,
+                new_ver,
+                str(rec["test_content"]),
+                self._user,
+                connection_params=new_params,
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Save Failed", str(exc))
+            return
+        try:
+            self._db.log_audit_action(
+                "Updated connection parameters",
+                username=self._user,
+                employee_id=self._employee_id,
+                details=(
+                    f"test={tname!r} new_version={new_ver!r} "
+                    f"params={new_params!r} prior_version={rec['version_name']!r}"
+                ),
+            )
+        except Exception:
+            pass
+        self._populate()
+        QMessageBox.information(
+            self,
+            "Connection Updated",
+            f"Created new version {new_ver!r} for {tname!r} with updated connection params.",
         )
 
     def _delete(self) -> None:
