@@ -114,17 +114,10 @@ class SequenceEditorDialog(QDialog):
         )
         if not ok:
             return
-        ver_name = ver_name.strip()
-        if not ver_name:
-            QMessageBox.warning(self, "Save", "Version name cannot be empty.")
-            return
-        invalid_chars = r'\/:*?"<>|'
-        if any(ch in ver_name for ch in invalid_chars):
-            QMessageBox.warning(
-                self,
-                "Invalid Name",
-                f"Version name cannot contain any of the following characters:\n{invalid_chars}",
-            )
+        try:
+            ver_name = ScriptManager.validate_version_name(ver_name)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Name", str(exc))
             return
         if self._db.version_exists(tname, ver_name):
             QMessageBox.warning(

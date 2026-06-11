@@ -18,20 +18,21 @@ The **DFX Tester** is an advanced software framework for managing and executing 
 
 To ensure operational safety on the production floor, the system uses strict Role-Based Access Control (RBAC).
 
-| Feature / Action                    | Operator      | Engineer | Admin |
-| :---------------------------------- | :-----------: | :------: | :---: |
-| Run Test Sequences                  | Yes           | Yes      | Yes   |
-| View Results (Pass/Fail)            | Yes           | Yes      | Yes   |
-| View Technical Limits (Min/Max)     | No            | Yes      | Yes   |
-| Edit Test Scripts (.tst)            | No            | Yes      | Yes   |
-| Export Full Detailed Reports        | No (Filtered) | Yes      | Yes   |
-| Manage Connection Parameters        | No            | No       | Yes   |
-| User Management                     | No            | No       | Yes   |
+| Feature / Action                |   Operator    | Engineer | Admin |
+| :------------------------------ | :-----------: | :------: | :---: |
+| Run Test Sequences              |      Yes      |   Yes    |  Yes  |
+| View Results (Pass/Fail)        |      Yes      |   Yes    |  Yes  |
+| Add\Remove Test From Scripts    |      No       |   Yes    |  Yes  |
+| View Technical Limits (Min/Max) |      No       |    No    |  Yes  |
+| Edit Test Scripts (.tst)        |      No       |    No    |  Yes  |
+| Export Full Detailed Reports    | No (Filtered) |    No    |  Yes  |
+| Manage Connection Parameters    |      No       |    No    |  Yes  |
+| User Management                 |      No       |    No    |  Yes  |
 
 ### Role Breakdown
 
 - **Operator:** Simplified UI for production line use. Hardware trace log and Min/Max limits are hidden. End-of-run shows a large PASS/FAIL banner only.
-- **Engineer:** Full access to engineering data — limits, trace log, test script editing, and detailed PDF exports.
+- **Engineer:** Like Operator but Can add, remove and change the order of tests.
 - **Admin:** All Engineer privileges plus user management, connection parameter editing, and report archiving controls.
 
 ---

@@ -16,6 +16,7 @@ from threading import Event
 
 from PySide6.QtCore import QThread, Signal
 
+from drivers.base_driver import BaseDriver, HardwareError
 from drivers.mock_hardware import MockHardware
 from logic.database_manager import DatabaseManager
 from logic.models import TestResultPayload, TestRunRecord, TestStep
@@ -52,6 +53,7 @@ class TestRunnerThread(QThread):
         script_manager: ScriptManager | None = None,
         start_time: datetime | None = None,
         logical_script_name: str = "",
+        driver: BaseDriver | None = None,
     ) -> None:
         super().__init__()
         self._script_path = Path(script_path)
@@ -60,7 +62,7 @@ class TestRunnerThread(QThread):
         self._loop_count = max(1, loop_count)
         self._stop_on_fail = stop_on_fail
         self._script_manager = script_manager or ScriptManager()
-        self._hw = MockHardware()
+        self._hw: BaseDriver = driver or MockHardware()
         self._stop_requested = False
         self._prompt_event: Event = Event()
         self._pause_event: Event = Event()
@@ -105,6 +107,16 @@ class TestRunnerThread(QThread):
         overall_passed = True
 
         try:
+            try:
+                if not self._hw.connect():
+                    self._emit_log("error", "Hardware connect() returned False; aborting.")
+                    overall_passed = False
+                    return
+            except HardwareError as exc:
+                self._emit_log("error", f"Hardware connection failed: {exc}")
+                overall_passed = False
+                return
+
             try:
                 all_steps = self._script_manager.load_script(self._script_path)
             except ScriptParseError as exc:
@@ -231,6 +243,10 @@ class TestRunnerThread(QThread):
                     break
 
         finally:
+            try:
+                self._hw.disconnect()
+            except Exception:
+                pass
             self._run_record.end_time = datetime.now()
             self._run_record.overall_passed = overall_passed
             try:
@@ -303,7 +319,7 @@ class TestRunnerThread(QThread):
             return None
 
         value = self._hw.execute_command(name, args)
-        return value if name in MockHardware.MEASUREMENT_COMMANDS else None
+        return value if name in self._hw.measurement_commands else None
 
     def resume(self) -> None:
         """Unblock a thread parked on a `Prompt` (called by the UI thread)."""

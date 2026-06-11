@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
@@ -30,6 +30,9 @@ def _make_form(parent: QWidget) -> QFormLayout:
 
 
 class ControlPanelWidget(QWidget):
+    start_requested = Signal()
+    stop_requested = Signal()
+
     def __init__(self, user_info: dict, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._root_layout = QVBoxLayout(self)
@@ -40,11 +43,13 @@ class ControlPanelWidget(QWidget):
         self.btn_start = QPushButton("Start")
         self.btn_start.setObjectName("btn_start")
         self.btn_start.setMinimumHeight(32)
+        self.btn_start.clicked.connect(self.start_requested)
         root.addWidget(self.btn_start)
 
         self.btn_stop = QPushButton("Stop")
         self.btn_stop.setObjectName("btn_stop")
         self.btn_stop.setMinimumHeight(26)
+        self.btn_stop.clicked.connect(self.stop_requested)
         root.addWidget(self.btn_stop)
 
         self.chk_save_log = QCheckBox("Save as log")
@@ -111,17 +116,11 @@ class ControlPanelWidget(QWidget):
         counters = QHBoxLayout()
         counters.setSpacing(4)
         self.label_pass = QLabel("PASS: 0")
+        self.label_pass.setObjectName("lbl_pass_counter")
         self.label_pass.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.label_pass.setStyleSheet(
-            "background-color: #22c55e; color: white; font-weight: bold; "
-            "padding: 3px; border-radius: 4px;"
-        )
         self.label_fail = QLabel("FAIL: 0")
+        self.label_fail.setObjectName("lbl_fail_counter")
         self.label_fail.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.label_fail.setStyleSheet(
-            "background-color: #ef4444; color: white; font-weight: bold; "
-            "padding: 3px; border-radius: 4px;"
-        )
         counters.addWidget(self.label_pass)
         counters.addWidget(self.label_fail)
         status_layout.addLayout(counters)
@@ -146,6 +145,12 @@ class ControlPanelWidget(QWidget):
 
         root.addWidget(status_box)
         root.addStretch()
+
+    def set_running_state(self, running: bool) -> None:
+        """Toggle button states and labels to reflect whether a run is active."""
+        self.btn_stop.setEnabled(running)
+        if not running:
+            self.btn_start.setText("Start")
 
     def take_user_box(self) -> QGroupBox:
         """Detach the User QGroupBox so MainWindow can re-parent it into the left sidebar.

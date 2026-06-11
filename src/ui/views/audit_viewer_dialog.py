@@ -196,18 +196,6 @@ class AuditViewerDialog(QDialog):
         for child in calendar.findChildren(QWidget):
             child.setFont(self._make_point_font(child.font(), point_size=10))
 
-        calendar.setStyleSheet(
-            """
-            QCalendarWidget,
-            QCalendarWidget QWidget,
-            QCalendarWidget QAbstractItemView,
-            QCalendarWidget QToolButton,
-            QCalendarWidget QComboBox,
-            QCalendarWidget QSpinBox {
-                font-size: 10pt;
-            }
-            """
-        )
 
     def _highlight_available_dates(self) -> None:
         """Bold+blue dates in the calendar widget that have a ``sys_*.dat`` file."""
@@ -355,22 +343,7 @@ class AuditViewerDialog(QDialog):
             )
             return
 
-        lines: list[str] = []
-        for rec in records:
-            ts_s = str(rec.get("ts", ""))
-            cat_s = str(rec.get("category", ""))
-            payload = rec.get("payload")
-            if isinstance(payload, str):
-                payload_s = payload
-            elif payload is not None:
-                try:
-                    payload_s = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-                except (TypeError, ValueError):
-                    payload_s = repr(payload)
-            else:
-                payload_s = ""
-            lines.append(f"[{ts_s}] {cat_s} {payload_s}")
-        self._hw_text.setPlainText("\n".join(lines))
+        self._hw_text.setPlainText(self._format_records(records))
 
     def _format_records(self, records: list[dict]) -> str:
         """Render decrypted log records into human-readable lines."""

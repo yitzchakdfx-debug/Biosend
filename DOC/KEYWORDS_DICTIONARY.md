@@ -54,13 +54,14 @@ The set of hardware commands recognized by `MockHardware.execute_command`:
 | `getid`       | side-effect   | `getid`                      | Mock identification ping. Returns no measurement.                                              |
 | `readchannel` | measurement   | `readchannel <channel>`      | Reads channel `<channel>`. The **last** measurement value executed in a step is what gets compared against `Limits` / `Tolerance`. |
 
-The set of measurement commands is defined in
-`MockHardware.MEASUREMENT_COMMANDS` and currently contains only
-`readchannel`. Adding a new measurement command means appending it to that
-frozenset, implementing it in `MockHardware.execute_command`, and adding a
+The set of measurement commands is defined by the driver's
+`measurement_commands` property (a `frozenset[str]`, currently `{"readchannel"}`
+for `MockHardware`). Adding a new measurement command means appending it to
+that frozenset, implementing it in the driver's `execute_command`, and adding a
 row here.
 
-Any unknown command name raises `ValueError("Unknown hardware command: ...")`
+Any unknown command name raises
+`drivers.base_driver.UnknownCommandError("Unknown hardware command: ...")`
 inside the runner; the step is marked FAIL and the trace shows the offending
 command.
 

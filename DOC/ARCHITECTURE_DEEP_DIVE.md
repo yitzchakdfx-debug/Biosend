@@ -4,163 +4,186 @@ This document is the canonical reference for *how* DFX_ate is built. Every
 non-trivial code change must be reflected here in the same commit. If a section
 contradicts the source, the source is wrong - fix the source, not the doc.
 
+> **Audit sync (2026-06-07):** This file was rewritten by an external code audit
+> after substantial drift was found. The application has grown well beyond the
+> original "script runner + SQLite history" design: it now includes a test
+> **version catalog**, an **audit trail**, **encrypted system logs**, **PDF/CSV
+> reporting**, a **live monitor**, and a richer RBAC/UI surface. Where the code
+> and prose disagreed, the prose was corrected.
+
+---
+
+## 0. Subsystem map
+
+| Subsystem            | Entry class / module                        | Layer    |
+| -------------------- | ------------------------------------------- | -------- |
+| Test sequencing      | `TestRunnerThread` (`logic/test_engine.py`) | logic    |
+| Script parsing       | `ScriptManager` (`logic/script_manager.py`) | logic    |
+| Persistence + RBAC   | `DatabaseManager` (`logic/database_manager.py`) | logic |
+| Encrypted logging    | `SecureLogger` (`logic/secure_logger.py`)   | logic    |
+| Reporting            | `ReportGenerator` (`logic/report_generator.py`) | logic |
+| Live monitor         | `MonitorThread` (`logic/monitor_engine.py`) | logic    |
+| Hardware abstraction | `BaseDriver` / `MockHardware` (`drivers/`)  | drivers  |
+| Composition root     | `MainWindow` (`ui/views/main_window.py`)    | ui       |
+| Config loader        | `env.py` → `config.py` / `version.py`      | top-level |
+
 ---
 
 ## 1. Threading model
 
-The single most important design choice in DFX_ate is that **the GUI thread
-never blocks**. Test execution is bounded by real-world hardware timing
-(measurements, settling, sleeps), so it lives entirely inside a
-`QThread` subclass.
+The central design choice is that **the GUI thread never blocks on hardware
+timing**. Three `QThread` subclasses exist in total — two in `logic/` and one
+in `ui/`:
+
+1. `TestRunnerThread` (`logic/test_engine.py`) — runs the active `.tst` sequence.
+2. `MonitorThread` (`logic/monitor_engine.py`) — emits simulated live readings on an interval.
+3. `ReportWorker` (`ui/report_worker.py`) — builds the PDF report off the GUI thread after a run.
+
+> Note: this means `logic/` now imports `PySide6.QtCore` in **two** files, not
+> one. `DEVELOPMENT_RULES.md` Rule 1's "only `test_engine.py`" exception has been
+> updated accordingly.
 
 ### 1.1 The runner
 
 `TestRunnerThread` (`src/logic/test_engine.py`) extends `QThread`. It owns:
 
-- the list of test names to execute,
-- a `LimitManager` for spec lookups,
-- a `MockHardware` instance (the only point of "I/O"),
-- a `DatabaseManager` for persistence,
-- a single boolean `_stop_requested` used as a cooperative cancel flag.
+- a script path + the set of selected step names,
+- a `ScriptManager` (parsing) and a `BaseDriver` implementation (default `MockHardware`),
+- a `DatabaseManager` (persistence) and an optional `SecureLogger`,
+- run metadata (operator, tester, employee id, UUT type, part/serial number,
+  logical script name, start time) folded into a `TestRunRecord`,
+- cooperative-control flags: `_stop_requested` (bool), a `_prompt_event`
+  (`threading.Event`) for `Prompt`, and a `_pause_event` (`threading.Event`,
+  *set = running*).
 
-`run()` iterates `loop_count x test_names`, and at each iteration:
+`run()` iterates `loop_count × selected_steps`. Per step it:
 
-1. Emits `current_test`, then `progress_test(0)`, then a `log_msg`.
-2. Looks up the spec via `LimitManager.get_limit(test_name)`.
-3. Calls `_simulate_test_progress()` (intermediate `progress_test` ticks).
-4. Calls `MockHardware.run_test(test_name)` - **the blocking call**.
-5. Compares to limits, builds a `TestResultPayload`, emits `test_result`,
-   appends to the in-memory `TestRunRecord.results`.
-6. Honors `stop_on_fail` and the cooperative `_stop_requested` flag.
-7. In the `finally:` block, stamps `end_time`, persists the run via
-   `DatabaseManager.save_run`, and lets QThread emit its built-in `finished`
-   signal.
+1. Waits on `_pause_event` (pause gate), checks `_stop_requested`.
+2. Emits `current_test`, resets `progress_test`, logs an `Executing:` line.
+3. Runs the step up to `retry_count + 1` times via `_run_step`.
+4. Builds a `TestResultPayload`, emits `test_result`, appends to
+   `TestRunRecord.results` (tagged with the loop number), and writes a
+   `test_result` record to the secure log.
+5. Updates `progress_test`/`progress_total`.
+6. Honors `Critical` (abort all loops on final-attempt failure) and
+   `stop_on_fail`.
 
-### 1.2 Cancellation
+In the `finally:` block it calls `self._hw.disconnect()` (swallowing any
+exception), stamps `end_time`, persists the run via `DatabaseManager.save_run`
+(wrapped in try/except), releases the pause gate, and lets `QThread` emit its
+built-in `finished` signal.
 
-Cancellation is cooperative, not pre-emptive. `MainWindow.stop_tests` calls
-`TestRunnerThread.stop()`, which sets `_stop_requested = True`. The runner
-checks the flag at every loop boundary, between each test, and between each
-command inside a step. This avoids forcibly terminating a thread
-mid-measurement, which would leak hardware state.
+### 1.2 Cancellation & pause
 
-### 1.3 In-script delays
+- **Cancel** is cooperative: `MainWindow.stop_tests()` → `TestRunnerThread.stop()`
+  sets `_stop_requested = True` and *sets both events* so a thread parked on a
+  prompt or a pause wakes, observes the flag, and exits through `finally:`
+  (still saving partial results). The flag is checked at every loop boundary,
+  before each step, inside the retry loop, and before each command in a step.
+- **Pause** is implemented with `_pause_event`. `MainWindow` reuses the Start
+  button as a Pause/Resume toggle: `pause()` clears the event, `resume_pause()`
+  sets it. The runner only blocks on the gate **at step boundaries**, not
+  between commands inside a step.
 
-The `Delay <ms>` command in a `.tst` file is **runner-side**: it is
-intercepted by `TestRunnerThread._execute_command` and serviced via
-`self.msleep()`. It never reaches `MockHardware`, and no logic helper ever
-calls `time.sleep` to implement it - that would violate Rule 2.
+### 1.3 In-script `Delay`
+
+`Delay <ms>` is runner-side: `_execute_command` services it with
+`self.msleep(...)`. It never reaches `MockHardware`, and no UI code calls
+`time.sleep`. (`MockHardware` itself uses `time.sleep` to simulate settling —
+that is fine because it always runs on the worker thread.)
 
 ### 1.4 Prompt synchronization
 
-The `Prompt <msg>` command parks the runner thread mid-step until the
-operator acknowledges a `QMessageBox`. The synchronization uses a
-standard-library `threading.Event` (`self._prompt_event`):
+`Prompt <msg>` parks the worker until the operator acknowledges a modal dialog:
 
 ```mermaid
 sequenceDiagram
     participant R as TestRunnerThread (worker)
     participant U as MainWindow (GUI thread)
-    R->>R: clear _prompt_event
-    R->>U: prompt_request(msg) [QueuedConnection]
+    R->>R: _prompt_event.clear()
+    R->>U: prompt_request(msg)  [QueuedConnection]
     R->>R: _prompt_event.wait()  (parked)
     U->>U: QMessageBox.information(...)
-    U->>R: resume()  -> _prompt_event.set()
-    R->>R: wake up, continue commands
+    U->>R: runner.resume()  -> _prompt_event.set()
+    R->>R: wake, continue commands
 ```
 
-`stop()` also sets `_prompt_event`, so a parked thread can be cancelled:
-the wait returns, the runner notices `_stop_requested`, and exits cleanly
-through the existing `finally:` block (which still saves whatever has been
-recorded so far).
+`stop()` also sets `_prompt_event`, so a parked thread can be cancelled.
 
-This is the only place outside `QtCore` where the logic layer touches a
-threading primitive - it is exempt from Rule 1 by the same justification
-that allows `QThread` / `Signal` in `test_engine.py`.
+### 1.5 The live monitor
 
-### 1.5 Why off the GUI thread
+`MonitorThread` (`logic/monitor_engine.py`) loops every `interval_ms` (default
+500), emitting `values_updated(dict)` with synthetic `V`/`A` readings.
+`MainWindow` starts it when `config.SHOW_LIVE_MONITOR` is true and stops it
+(`stop()` joins via `wait()`) on logout/close.
 
-Anything that calls `time.sleep`, talks to instruments, or runs a long
-computation on the main thread freezes the entire window (no repaints, no
-input). The QThread separation guarantees:
+### 1.6 Thread wiring: report worker and shutdown
 
-- progress bars actually animate during tests,
-- `Stop` is always responsive,
-- the user can resize/minimize the window mid-run.
+After a run, `MainWindow._finalize_run_reports` launches a `ReportWorker`
+(if "Save as log" is enabled). The worker emits `archived(str)` or `failed(str)`;
+both are connected to `append_trace`. `finished` is connected to `deleteLater`
+and clears `self._report_worker`.
 
-This is also why `DEVELOPMENT_RULES.md` forbids `time.sleep` and hardware
-calls outside a `QThread`.
+`MainWindow._shutdown_threads()` is the single shutdown path — it is called from
+both `closeEvent` and `logout`:
+
+1. If `TestRunnerThread` is running: call `stop()`, `wait(5000)`.
+2. If `ReportWorker` is running: `wait(5000)`.
+3. If `MonitorThread` is running: `stop()`.
+
+`closeEvent` prompts the operator before aborting a live test run.
 
 ---
 
-## 2. Hybrid data strategy
+## 2. Data strategy
 
-DFX_ate splits persistence by **mutability** and **purpose**:
+DFX_ate persists in three places, split by purpose:
 
-| Concern                  | Backend     | File                       | Why                                                                 |
-| ------------------------ | ----------- | -------------------------- | ------------------------------------------------------------------- |
-| Test sequence (config)   | Plain text  | `src/data/*.tst`           | Edited in-app via `ScriptEditorDialog`; parsed by `ScriptManager` into `TestStep` objects with inline limits, units, and `Critical` flags. |
-| Spec limits (legacy)     | JSON        | `src/data/limits.json`     | Superseded by inline `Limits` keyword in `.tst` files. `LimitManager` is no longer wired into the runtime; retained for reference. |
-| Historical run results   | SQLite      | `src/data/database.db`     | Append-only, queryable, supports relational integrity.              |
+| Concern                        | Backend        | Location                          |
+| ------------------------------ | -------------- | --------------------------------- |
+| Test sequences (authored)      | Plain text     | `data/*.tst` (seed) + DB catalog  |
+| Test-version catalog & history | SQLite         | `data/database.db`                |
+| Encrypted system/hardware logs | Fernet `.dat`  | `data/logs/sys_YYYYMMDD.dat`      |
+| Archived reports               | PDF (+ CSV)    | `data/results/<UUT>/<Serial>/`    |
+| Spec limits (legacy)           | JSON           | `data/limits.json` **(unused)**   |
 
 ### 2.1 Script engine
 
-`ScriptManager` (`src/logic/script_manager.py`) is the single seam for `.tst`
-files - it owns raw `read_script` / `write_script` (used by the editor) and
-the `load_script` parser (used by the runner). The grammar is documented in
-[KEYWORDS_DICTIONARY.md](KEYWORDS_DICTIONARY.md); summary:
+`ScriptManager` is the single seam for `.tst` files. `load_document()` returns a
+`ScriptDocument` (`metadata` + ordered `TestStep`s); `load_script()` returns just
+the steps. Grammar is in [KEYWORDS_DICTIONARY.md](KEYWORDS_DICTIONARY.md):
 
-- Lines starting with `:` open a new `TestStep`.
-- Inside a step, the case-insensitive keywords `Critical`, `Limits <min> <max>`,
-  `Target <val> Tol <pct>`, `Unit <str>`, and `Retry <n>` configure that step.
-- `Limits` and `Target/Tol` are mutually exclusive; specifying both is a parse
-  error. `Target/Tol` resolves to `min = val * (1 - pct/100)`,
-  `max = val * (1 + pct/100)` at parse time, so the runner never has to know
-  which form was used.
-- Every other non-comment line is a `{"cmd": str, "args": list[str]}` entry
-  appended to the step's command list. The runner-side commands `Delay`,
-  `Log`, and `Prompt` are recognized at execution time and never reach the
-  hardware driver.
-- Bad input raises `ScriptParseError(line_no, line, msg)` so the trace log
-  shows precisely which line is wrong.
+- A `PartNum:` line in the preamble (optionally `#`-prefixed) becomes
+  `metadata["part_number"]` and auto-fills the UI part-number field.
+- `:` opens a step. `Critical`, `Limits <min> <max>`, `Target <v> Tol <pct>`,
+  `Unit <str>`, `Retry <n>` configure the current step (case-insensitive).
+  `Limits` and `Target/Tol` are mutually exclusive; `Target/Tol` resolves to
+  min/max at parse time.
+- Every other non-comment line is a `{"cmd", "args"}` command. `Delay`, `Log`,
+  and `Prompt` are intercepted at execution time; everything else dispatches to
+  `MockHardware.execute_command`.
+- The **last** measurement value in a step is compared to the step's limits. A
+  step with limits but no executed measurement is logged and FAILs. A step
+  without limits passes if no command raises (rendered with `-` in value/min/max).
+- `Critical` aborts the whole run on final-attempt failure. Bad input raises
+  `ScriptParseError(line_no, line, msg)`, which the runner catches and emits to
+  the trace.
 
-The runner walks each step in order, dispatching commands through
-`MockHardware.execute_command` (with the runner-side overrides above). The
-**last** measurement value returned in a step is compared against the step's
-limits to decide pass/fail. A step **with** limits but no executed
-measurement command is logged and marked FAIL. A step **without** limits
-passes as long as none of its commands raise; it appears in the results
-table with `-` for value/min/max.
-
-`Critical` is enforced at the step boundary: when a step is critical and
-fails (after exhausting any retries), the runner emits
-`CRITICAL ABORT: <name> failed; halting sequence.`, breaks both loops, and
-falls through to the existing `finally:` block which persists the partial
-run via `DatabaseManager.save_run`.
+`serialize_ordered_steps()` rebuilds `.tst` text from `TestStep`s (used when the
+Sequence Editor saves a new catalog version).
 
 #### Retry semantics
 
-A step with `Retry N` runs **at most `N + 1` times**. Behavior:
+A step with `Retry N` runs at most `N + 1` times. Only the **final** attempt is
+reported (one `test_result`, one history row). Intermediate failures emit a
+`attempt k/N+1 failed, retrying...` trace line. `Critical` is evaluated against
+the final attempt.
 
-- Intermediate failures emit `<step>: attempt k/N+1 failed, retrying...` to
-  the trace log but do **not** produce a results-table row or a DB entry.
-- Exactly one `test_result` is emitted per step, reflecting the final
-  attempt only. The same is true for the `TestRunRecord.results` list that
-  is persisted to SQLite - history stays clean.
-- `Critical` evaluation runs against the final attempt: a critical step
-  that ultimately passes after retrying does **not** abort the run.
-- A pending stop request short-circuits the retry loop at the next attempt
-  boundary.
+### 2.2 SQLite schema
 
-### 2.2 Test scripts: `.tst`
-
-The editor never writes via direct `Path.write_text` - it always goes through
-`ScriptManager.write_script`, which validates the `.tst` suffix.
-
-### 2.3 History: SQLite
-
-`DatabaseManager` (`src/logic/database_manager.py`) uses stdlib `sqlite3`
-with `PRAGMA foreign_keys = ON;` and parameterized queries. The schema:
+`DatabaseManager` (stdlib `sqlite3`) opens a fresh connection per method with
+`row_factory = sqlite3.Row` and `PRAGMA foreign_keys = ON;`, and uses
+**parameterized queries everywhere**. Five tables:
 
 ```mermaid
 erDiagram
@@ -184,104 +207,130 @@ erDiagram
         TEXT unit
         INTEGER passed
     }
+    users {
+        INTEGER id PK
+        TEXT username "UNIQUE, NOCASE"
+        BLOB password_hash
+        BLOB salt
+        TEXT role "CHECK Operator/Technician/Admin"
+        TEXT employee_id
+        TEXT created_at
+        TEXT updated_at
+    }
+    test_versions {
+        INTEGER id PK
+        TEXT test_name
+        TEXT uut_type
+        TEXT version_name
+        TEXT test_content
+        TEXT connection_params
+        TEXT created_at
+        TEXT created_by
+    }
+    audit_logs {
+        INTEGER id PK
+        TEXT timestamp
+        TEXT username
+        TEXT employee_id
+        TEXT action
+        TEXT details
+    }
 ```
 
-Booleans are stored as `INTEGER` (0/1) per SQLite convention; timestamps as
-ISO-8601 strings. `save_run` performs the parent insert, captures
-`lastrowid`, and bulk-inserts children with `executemany` inside a single
-transaction (the `with conn:` block commits atomically).
+- `test_versions` has `UNIQUE(test_name, version_name)` and a **live
+  `ALTER TABLE` migration** that adds `connection_params` if missing (format
+  `PORT|BAUD|PARITY|STOP_BITS`). This is the one place the codebase adds a
+  column rather than a row (see `DEVELOPMENT_RULES.md` Rule 5).
+- `save_run` inserts the parent run, captures `lastrowid`, then bulk-inserts
+  results with `executemany` inside one `with conn:` transaction.
+- `_create_tables()` (DDL + PRAGMA + idempotent admin seed) runs **on every
+  `DatabaseManager()` construction**. The app constructs many of them (see audit).
 
-### 2.4 Why the split
+### 2.3 Encrypted logging
 
-Configuration changes hands between humans (engineers reviewing limits) and
-should live in version control. Run history is machine-generated, append-only,
-and benefits from indexed relational queries. Mixing them - for example,
-storing limits as DB rows - would couple every limit edit to a schema
-migration and break the diff workflow.
+`SecureLogger` writes one Fernet token per line to `data/logs/sys_YYYYMMDD.dat`
+(append-only, guarded by a `threading.Lock`). The key is derived with PBKDF2-
+HMAC-SHA256 (200k iterations, fixed salt) from `config.LOG_ENCRYPTION_PASSWORD`,
+which is now sourced from `.env` (key `LOG_ENCRYPTION_PASSWORD`; fallback `"DFX"`).
+The runner logs `trace`/`test_result` records; `DatabaseManager.log_audit_action`
+mirrors `system` events. The Audit Viewer decrypts a chosen day (or an arbitrary
+`.dat`) on demand. Override `LOG_ENCRYPTION_PASSWORD` in `.env` for any
+meaningful confidentiality guarantee.
+
+### 2.4 Reporting
+
+`ReportGenerator` builds PDF (ReportLab `SimpleDocTemplate` + `LongTable`, with a
+top-right `BirdLogo.png` watermark merged via PyPDF2) and CSV. Detail is
+role-gated: **Admin** reports include Min/Max/Value/Unit; other roles get
+Test Name + Result only. Admin PDFs are encrypted with `config.ADMIN_REPORT_PASSWORD`
+(sourced from `.env`; key `ADMIN_REPORT_PASSWORD`). At end of run the report
+auto-archives to `data/results/<UUT>/<Serial>/` when the (Admin-only) "Save as
+log" box is checked — the build runs in `ReportWorker` (off the GUI thread).
+CSV/PDF can also be exported manually from the Results menu (synchronous, on the
+GUI thread, user-initiated).
 
 ---
 
 ## 3. UI composition
 
-`MainWindow` (`src/ui/views/main_window.py`) is the composition root. It owns
-the layout but **delegates input concerns** to dedicated widgets and dialogs:
+`MainWindow` (`ui/views/main_window.py`) is the composition root. It builds the
+entire layout in Python (the checked-in `main_window.ui` is **not** used) and
+owns far more than layout (see audit — it is a god object). Structure:
 
 ```mermaid
 flowchart TB
-    Main[MainWindow] --> Ribbon[Ribbon: Toggle Theme, Edit Test File]
-    Main --> Splitter[QSplitter horizontal]
-    Splitter --> List[QListWidget tests]
-    Splitter --> Table[QTableWidget results]
-    Splitter --> Panel[ControlPanelWidget]
-    Main --> Trace[QTextEdit trace log]
-    Main -. spawns .-> Login[LoginDialog]
-    Main -. spawns .-> Editor[ScriptEditorDialog]
+    Main[MainWindow] --> Menu[Menu bar: File / Test / Results / Users* / Help]
+    Main --> Ribbon[Ribbon: Theme, Select Test, Edit Sequence, Versions*, Audit*, Log Out, Exit]
+    Main --> Row[Main row]
+    Row --> Left[Left sidebar: User box + Test Cases list + list actions]
+    Row --> Center[Vertical splitter]
+    Center --> Table[Results QTableWidget]
+    Center --> Trace[HW Trace QTextEdit + filter]
+    Row --> Right[Right scroll: InstrumentPanel + ControlPanel]
+    Main -. spawns .-> Dialogs[Login / PreTest / SelectTest / SequenceEditor / ScriptEditor / VersionManager / AuditViewer / UserManagement / TestResult]
+    Main -. owns .-> Monitor[MonitorThread]
+    Main -. owns .-> Runner[TestRunnerThread]
 ```
 
-Key contract: dialogs are constructed with `parent=self` (the main window)
-so the active QSS stylesheet propagates down the widget tree. This is why
-the script editor and login dialog automatically follow the current theme
-without separately loading a `.qss` file.
+\* `Versions` / `Audit` ribbon buttons and the `Users` menu are Admin-only.
 
-`ControlPanelWidget` (`src/ui/widgets/control_panel.py`) owns its own
-sub-layout (Start/Stop buttons, User group box, Unit group box, Status
-group box with progress + counters + loop options). `MainWindow` only
-references its public attributes (`btn_start`, `progress_total`, etc.) to
-wire signals; it does not reach into private layout.
+Dialogs are constructed with `parent=self` so the active QSS stylesheet
+propagates down the tree. `ControlPanelWidget` exposes public attributes
+(`btn_start`, `edit_part_number`, `chk_save_log`, `spin_loops`, …) which
+`MainWindow` both reads **and mutates** (text, read-only, visibility) — tighter
+coupling than the previous doc claimed.
 
 ---
 
 ## 4. Signal/slot map
 
-All cross-thread communication happens through Qt's signal/slot mechanism,
-which delivers across a `QueuedConnection` automatically when source and
-destination live on different threads. This is the *only* sanctioned way to
-push data from the runner to the UI.
+All cross-thread communication uses Qt signals (auto-`QueuedConnection` across
+threads). Connections are established in `MainWindow._start_test_run`:
 
-```mermaid
-flowchart LR
-    subgraph BG [Background QThread]
-        Engine[TestRunnerThread]
-    end
-    subgraph UI [Main UI Thread]
-        Win[MainWindow]
-        Panel[ControlPanelWidget]
-    end
-    Engine -- "log_msg(str)" --> Win
-    Engine -- "test_result(str, dict)" --> Win
-    Engine -- "current_test(str)" --> Panel
-    Engine -- "progress_test(int)" --> Panel
-    Engine -- "progress_total(int)" --> Panel
-    Engine -- "prompt_request(str)" --> Win
-    Engine -- "script_log(str)" --> Win
-    Engine -- "finished()" --> Win
-    Win -- "resume()" --> Engine
-```
+| Signal (source)                                | Slot (destination)                              |
+| ---------------------------------------------- | ----------------------------------------------- |
+| `TestRunnerThread.log_msg(str)`                | `MainWindow.append_trace`                       |
+| `TestRunnerThread.test_result(str, dict)`      | `MainWindow.update_results_table`               |
+| `TestRunnerThread.loop_started(int, int)`      | `MainWindow._on_loop_started`                   |
+| `TestRunnerThread.progress_total(int)`         | `ControlPanelWidget.progress_total.setValue`    |
+| `TestRunnerThread.progress_test(int)`          | `ControlPanelWidget.progress_test.setValue`     |
+| `TestRunnerThread.current_test(str)`           | `ControlPanelWidget.edit_current_test.setText`  |
+| `TestRunnerThread.prompt_request(str)`         | `MainWindow._on_prompt_request`                 |
+| `TestRunnerThread.script_log(str)`             | `MainWindow._on_script_log`                     |
+| `TestRunnerThread.finished` (built-in)         | `MainWindow.on_tests_finished`                  |
+| `MonitorThread.values_updated(dict)`           | `InstrumentPanelWidget.update_values`           |
+| `ReportWorker.archived(str)`                   | `MainWindow.append_trace` (lambda)              |
+| `ReportWorker.failed(str)`                     | `MainWindow.append_trace` (lambda)              |
+| `ReportWorker.finished` (built-in)             | `ReportWorker.deleteLater`                      |
+| `MainWindow.sequence_finished(bool)`           | `MainWindow._show_result_dialog`                |
 
-Concrete connections established in `MainWindow.start_tests`:
+The reverse runner→UI control path (`resume()`, `pause()`, `resume_pause()`,
+`stop()`) is plain method calls from the GUI thread that set/clear the runner's
+`threading.Event`s and flags — not Qt signals.
 
-| Signal (source)                              | Slot (destination)                                  |
-| -------------------------------------------- | --------------------------------------------------- |
-| `TestRunnerThread.log_msg(str)`              | `MainWindow.append_trace`                           |
-| `TestRunnerThread.test_result(str, dict)`    | `MainWindow.update_results_table`                   |
-| `TestRunnerThread.progress_total(int)`       | `ControlPanelWidget.progress_total.setValue`        |
-| `TestRunnerThread.progress_test(int)`        | `ControlPanelWidget.progress_test.setValue`         |
-| `TestRunnerThread.current_test(str)`         | `ControlPanelWidget.edit_current_test.setText`     |
-| `TestRunnerThread.prompt_request(str)`       | `MainWindow._on_prompt_request`                     |
-| `TestRunnerThread.script_log(str)`           | `MainWindow._on_script_log`                         |
-| `TestRunnerThread.finished` (built-in)       | `MainWindow.on_tests_finished`                      |
-
-The reverse direction is not a Qt signal but a plain method call: once the
-operator dismisses the message box, the slot calls `runner.resume()` from
-the GUI thread, which sets the runner's `threading.Event` and lets the
-parked worker continue (see Section 1.4).
-
-The runner emits a `dict` payload (not a `TestResultPayload` instance) so
-the receiving slot does not need to import the typed-dict definition; the
-shape is documented in `logic/models.py` as `TestResultPayload`. The payload
-includes an `is_measurement: bool` field - when `False`, `MainWindow.update_results_table`
-renders `-` in the value/min/max columns (used for setup/teardown steps that
-have no `Limits`).
+The runner emits a `dict` (not a `TestResultPayload` instance); the shape is
+documented in `models.py`. `is_measurement=False` makes the table render `-`
+for value/min/max.
 
 ---
 
@@ -293,26 +342,26 @@ sequenceDiagram
     participant M as main.py
     participant Lock as SingleInstanceLock
     participant L as LoginDialog
-    participant C as ChangePasswordDialog
     participant W as MainWindow
-    participant T as TestRunnerThread
     U->>M: launch
-    M->>Lock: acquire app.lock
-    M->>L: exec()
-    alt must_change_pwd
-        L->>C: exec()
-        C-->>L: password updated
+    M->>M: env.load_env_once() (via config import)
+    M->>M: set AppUserModelID; ensure_user_data_seeded()
+    M->>Lock: acquire data/app.lock
+    loop until login cancelled or window closed without logout
+        M->>L: exec()
+        L-->>M: {role, name, username, employee_id}  (audit: "User Logged In")
+        M->>W: MainWindow(user_info).show(); app.exec()
+        alt logout_requested
+            M->>M: loop again (switch user)
+        else
+            M->>M: break
+        end
     end
-    L-->>M: {role, name, username}
-    M->>W: MainWindow(user_info).show()
-    U->>W: click Start
-    W->>T: start()
-    loop per test
-        T-->>W: signals (progress / log / result)
-    end
-    T-->>W: finished()
-    W->>U: enable Start, append "Sequence Complete."
+    M->>Lock: release()
 ```
+
+There is **no** `ChangePasswordDialog` and **no** `must_change_pwd` gate — the
+previous boot diagram showed a flow that does not exist in the code.
 
 ---
 
@@ -320,52 +369,75 @@ sequenceDiagram
 
 ### 6.1 Users table
 
-`DatabaseManager` owns a `users` table with these fields:
+`users` holds `username` (unique, `COLLATE NOCASE`), `password_hash` + `salt`
+(PBKDF2-HMAC-SHA256, 200,000 iterations), `role`
+(`CHECK(role IN ('Operator','Technician','Admin'))`), `employee_id`, and
+`created_at`/`updated_at`. There is **no** `must_change_pwd` column.
 
-- `username` (unique, case-insensitive)
-- `password_hash` + `salt` (PBKDF2-HMAC-SHA256, 200,000 iterations)
-- `role` (`Operator`, `Engineer`, `Admin`)
-- `must_change_pwd` (boolean flag)
+On schema bootstrap an idempotent `INSERT OR IGNORE` seeds the default admin
+using values from `config.DEFAULT_ADMIN_USERNAME` / `DEFAULT_ADMIN_PASSWORD` /
+`DEFAULT_ADMIN_EMPLOYEE_ID` (overridable via `.env`; fallbacks: `lior`, `Aa123456`,
+`0000`). Because bootstrap runs on every `DatabaseManager()` construction, the
+seed is attempted repeatedly (`OR IGNORE` makes subsequent attempts a no-op). This
+is seed-once behavior: changing `.env` after the DB exists does **not** update the
+existing admin row.
 
-On startup/schema bootstrap, an idempotent seed ensures admin user `lior`
-exists with `must_change_pwd = 0`.
+> The three roles are **Operator / Technician / Admin**. Earlier docs (and the
+> README) call the middle role "Engineer" — that name is not in the code.
 
-### 6.2 Role gates in the UI
+### 6.2 Role gates (presentation-layer only)
 
-- **Operator**: can run tests, cannot edit scripts, Min/Max columns are hidden, and CSV/JSON exports omit Min/Max.
-- **Engineer**: full execution + script editor access.
-- **Admin**: Engineer permissions + Help -> User Management dialog.
+- **Operator**: run only. No Min/Max columns, no trace log, no list actions, no
+  script/sequence editing; runs come from the DB catalog via Select Test (temp
+  `.tst`). Min/Max are hidden in UI and reports.
+- **Technician**: like Operator for column visibility (Min/Max hidden in UI and
+  reports), **but** can use the trace log, the test-list actions, and the
+  Sequence Editor (and persist new versions).
+- **Admin**: everything, plus the "Save as log" toggle, Versions manager, Audit
+  viewer, User Management, and full-detail (encrypted) reports.
 
-Important: role gating is presentation-layer only; database persistence of
-measurements remains complete (`min_val`/`max_val` are always stored in
-`test_results`).
+Database persistence is always complete — `min_val`/`max_val` are stored
+regardless of role; gating is purely visual.
 
-### 6.3 Password lifecycle
+### 6.3 Password lifecycle (current reality)
 
-- Login verification is handled through `AuthManager -> DatabaseManager.verify_login`.
-- If `must_change_pwd = 1`, login is blocked behind `ChangePasswordDialog`.
-- Admin password reset and new-user creation issue secure temporary passwords
-  and set `must_change_pwd = 1`.
+- Login: `AuthManager.login` → `DatabaseManager.verify_login` (constant-time
+  hash compare via `secrets.compare_digest`).
+- Admin can create/edit/delete users and reset passwords via User Management.
+- `AuthManager.validate_password_strength()` exists but is **not called
+  anywhere** — there is currently no enforced password policy.
+- No forced first-login password change exists.
 
-### 6.4 Local single-instance protection
+### 6.4 Audit trail
 
-`main.py` acquires `SingleInstanceLock` (`src/logic/file_lock.py`) on app start.
-The lock is a PID file (`src/data/app.lock`) created with exclusive semantics.
-If another live process owns the lock, startup stops with a modal error.
+`DatabaseManager.log_audit_action` appends an `audit_logs` row (and mirrors a
+`system` event to the encrypted log) for: login, logout, test run started /
+completed, version import / create / connection-param update. Wrapped in
+try/except at every call site so audit failures never break the flow.
+
+### 6.5 Single-instance protection
+
+`main.py` acquires `SingleInstanceLock` on startup. **On Windows** the lock is
+a named mutex (`CreateMutexW(None, False, "Local\\DFX_ate_singleton")`); the OS
+releases it automatically when the process dies, so there is no stale-lock
+problem and no liveness probe needed. If `GetLastError() == ERROR_ALREADY_EXISTS`
+(183) a second instance raises `AlreadyRunningError`. **On POSIX** the original
+PID-file + `os.kill(pid, 0)` path is retained.
 
 ---
 
 ## 7. Maintenance protocol
 
-These five files in `DOC/` are part of the build, not commentary on it.
+These files in `DOC/` are part of the build, not commentary on it.
 
 - **Every code change must update the relevant `DOC/` file in the same commit.**
-- New files: add a row to `FILE_MANIFEST.md`.
-- New signals or threads: update Section 4 (signal map) and Section 1.
-- New tables, columns, or pragmas: update Section 2.3 and the ER diagram.
-- New rules or exceptions: update `DEVELOPMENT_RULES.md` and link them here.
-- New runtime/OS/dependency requirements: update `SPECIFICATIONS.md`.
+- New files → add to `FILE_MANIFEST.md`.
+- New signals/threads → update §1 and §4.
+- New tables/columns/pragmas → update §2.2 and the ER diagram.
+- New keywords/commands → update `KEYWORDS_DICTIONARY.md`.
+- New rules/exceptions → update `DEVELOPMENT_RULES.md`.
+- New runtime/dependency requirements → update `SPECIFICATIONS.md`.
 
-If a PR touches `src/` and not `DOC/`, the author must justify the omission
-in the PR description. Drift is the failure mode this directory exists to
-prevent.
+If a PR touches `src/` and not `DOC/`, justify the omission. Drift is the failure
+mode this directory exists to prevent — and, as the 2026-06-07 audit found, it
+had already set in.

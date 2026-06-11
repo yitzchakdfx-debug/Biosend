@@ -1,29 +1,35 @@
-"""Abstract base class for hardware interfaces."""
-
+"""Abstract hardware-driver contract and error hierarchy."""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
 
-from logic.models import TestOutcome
 
-if TYPE_CHECKING:
-    from logic.models import TestConfig
+class HardwareError(Exception):
+    """Base class for all hardware/driver faults."""
+
+
+class ConnectionLostError(HardwareError):
+    """Raised when the link to an instrument drops mid-session."""
+
+
+class CommandTimeoutError(HardwareError):
+    """Raised when an instrument does not respond in time."""
+
+
+class UnknownCommandError(HardwareError):
+    """Raised when a script issues a command the driver does not implement."""
 
 
 class BaseDriver(ABC):
-    """Hardware or simulation backend for tests."""
+    @abstractmethod
+    def connect(self) -> bool: ...
 
     @abstractmethod
-    def connect(self) -> bool:
-        """Open session to hardware (or simulator)."""
+    def disconnect(self) -> None: ...
 
     @abstractmethod
-    def disconnect(self) -> None:
-        """Release resources."""
+    def execute_command(self, command: str, args: list[str]) -> float: ...
 
+    @property
     @abstractmethod
-    def execute_test(
-        self, config: TestConfig
-    ) -> tuple[TestOutcome, str, dict[str, float]]:
-        """Run one test; returns (outcome, message, measured values)."""
+    def measurement_commands(self) -> frozenset[str]: ...

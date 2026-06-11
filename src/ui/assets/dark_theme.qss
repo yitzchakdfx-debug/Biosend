@@ -407,7 +407,53 @@ QLabel#readout_value_A {
 QLabel#readout_value_V { color: #22d3ee; }
 QLabel#readout_value_A { color: #4ade80; }
 
-/* --- 9. Calendar Widget (QCalendarWidget Dropdown) --- */
+/* --- 9. Semantic label variants (replaces inline setStyleSheet calls) --- */
+
+QLabel#lbl_pass_counter {
+    background-color: #16a34a;
+    color: white;
+    font-weight: bold;
+    padding: 3px;
+    border-radius: 4px;
+}
+QLabel#lbl_fail_counter {
+    background-color: #dc2626;
+    color: white;
+    font-weight: bold;
+    padding: 3px;
+    border-radius: 4px;
+}
+QLabel#lbl_banner_pass {
+    background-color: #16a34a;
+    color: #ffffff;
+    font-size: 44pt;
+    font-weight: 900;
+    border-radius: 6px;
+    padding: 24px;
+}
+QLabel#lbl_banner_fail {
+    background-color: #dc2626;
+    color: #ffffff;
+    font-size: 44pt;
+    font-weight: 900;
+    border-radius: 6px;
+    padding: 24px;
+}
+QLabel#lbl_error {
+    color: #f87171;
+    font-weight: bold;
+}
+QLabel#lbl_pwd_hint {
+    color: #94a3b8;
+    font-size: 9pt;
+    font-weight: normal;
+}
+QLabel#lbl_status_hint {
+    color: #94a3b8;
+    font-weight: normal;
+}
+
+/* --- 10. Calendar Widget (QCalendarWidget Dropdown) --- */
 
 /* Navigation bar at the top */
 QCalendarWidget QWidget#qt_calendar_navigationbar {
@@ -466,13 +512,22 @@ QCalendarWidget QToolButton#qt_calendar_nextmonth {
     font-size: 12pt;
 }
 
+/* Navigation buttons — keep compact at 10pt */
+QCalendarWidget QToolButton {
+    font-size: 10pt;
+}
+QCalendarWidget QComboBox,
+QCalendarWidget QSpinBox {
+    font-size: 10pt;
+}
+
 /* The actual days grid */
 QCalendarWidget QAbstractItemView:enabled {
     background-color: #313335;
     color: #e0e0e0;
     selection-background-color: #2f65ca;
     selection-color: #ffffff;
-    font-size: 12pt;
+    font-size: 10pt;
     outline: none;
 }
 QCalendarWidget QAbstractItemView:disabled {

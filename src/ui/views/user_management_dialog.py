@@ -76,14 +76,14 @@ class UserEditDialog(QDialog):
             form.addRow("Confirm", self._pwd_confirm)
         else:
             pwd_label = QLabel("Leave blank to keep current password.")
-            pwd_label.setStyleSheet("color: #64748b; font-size: 9pt;")
+            pwd_label.setObjectName("lbl_pwd_hint")
             form.addRow("", pwd_label)
             form.addRow("New password", self._pwd)
             form.addRow("Confirm", self._pwd_confirm)
 
         root.addLayout(form)
         self._error = QLabel("")
-        self._error.setStyleSheet("color: #dc2626; font-weight: bold;") # תוספת צבע אדום לשגיאות
+        self._error.setObjectName("lbl_error")
         root.addWidget(self._error)
 
         buttons = QDialogButtonBox(

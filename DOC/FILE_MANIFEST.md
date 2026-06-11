@@ -4,50 +4,122 @@ Authoritative inventory of every source artifact in the DFX_ate project. Update
 this table whenever a file is added, renamed, removed, or has its responsibility
 materially changed.
 
-| File Path                              | Module        | Short Description                                                                                       |
-| -------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------- |
-| `src/main.py`                          | entry         | Application entry point; constructs `QApplication`, runs `LoginDialog`, then opens `MainWindow`.        |
-| `src/ui/__init__.py`                   | ui            | Marks the Qt UI layer package.                                                                          |
-| `src/ui/views/__init__.py`             | ui.views      | Marks the views (top-level dialogs and the main window) package.                                        |
-| `src/ui/views/main_window.py`          | ui.views      | `MainWindow` (`QMainWindow`); ribbon (Toggle Theme / Load Script / Edit Test File), role-aware gating (Operator/Engineer/Admin), metadata-driven part-number autofill from script header, export controls, prompt dialog handler that releases the runner via `resume()`, and wiring to `TestRunnerThread`. |
-| `src/ui/views/login_dialog.py`         | ui.views      | `LoginDialog`; authenticates via `AuthManager`, blocks invalid login, and forces password change when required. |
-| `src/ui/views/change_password_dialog.py` | ui.views    | `ChangePasswordDialog`; mandatory post-login password update flow when `must_change_pwd=1`.             |
-| `src/ui/views/user_management_dialog.py` | ui.views    | `UserManagementDialog`; Admin-only CRUD/reset operations for local users and roles.                     |
-| `src/ui/views/script_editor.py`        | ui.views      | `ScriptEditorDialog`; `QPlainTextEdit`-based editor for `.tst` files, delegates I/O to `ScriptManager`. |
-| `src/ui/widgets/__init__.py`           | ui.widgets    | Marks the reusable widgets package.                                                                     |
-| `src/ui/widgets/control_panel.py`      | ui.widgets    | `ControlPanelWidget`; right-hand control rail (start/stop, user, unit, status, progress, counters).     |
-| `src/ui/assets/light_theme.qss`        | ui.assets     | Light QSS theme (palette + headers + scrollbars + plain-text editor).                                   |
-| `src/ui/assets/dark_theme.qss`         | ui.assets     | Dark QSS theme (palette + headers + plain-text editor).                                                 |
-| `src/ui/assets/style.qss`              | ui.assets     | Legacy stylesheet retained for reference; not loaded by the running app.                                |
-| `src/logic/__init__.py`                | logic         | Marks the test sequencing and domain-model package.                                                     |
-| `src/logic/models.py`                  | logic         | Domain types: `TestLimit` (legacy), `TestStep` (parsed script step, includes `retry_count`), `TestResultPayload` `TypedDict` (includes `is_measurement`), `TestRunRecord`. |
-| `src/logic/test_engine.py`             | logic         | `TestRunnerThread(QThread)`; **script-driven**. Loads via `ScriptManager`, dispatches commands through `MockHardware.execute_command`, intercepts `Delay` via `msleep`, intercepts `Log` (-> `script_log` signal) and `Prompt` (parks on `threading.Event` until `resume()`), runs each step inside a `Retry` loop that reports only the final attempt, aborts on `Critical` failures. |
-| `src/logic/limit_manager.py`           | logic         | `LimitManager`; **legacy**. Superseded by inline `Limits` keyword in `.tst` scripts; kept on disk for reference / external tooling but no longer wired into the runtime. |
-| `src/logic/database_manager.py`        | logic         | `DatabaseManager`; SQLite schema bootstrap and parameterized inserts for `test_runs` / `test_results` plus RBAC user storage and password lifecycle operations. |
-| `src/logic/script_manager.py`          | logic         | `ScriptManager`; discovery, raw read/write, and parsing of `.tst` files into `ScriptDocument` (`metadata` + `steps`). Recognizes `PartNum:` header metadata plus `Critical`, `Limits`, `Tolerance` (`Target ... Tol ...`), `Unit`, and `Retry`; defines `ScriptParseError` for line-precise diagnostics. |
-| `src/logic/auth_manager.py`            | logic         | `AuthManager`; DB-backed authentication facade with password-strength validation and password-change support. |
-| `src/logic/file_lock.py`               | logic         | `SingleInstanceLock`; PID-file guard preventing concurrent app instances from mutating local state.      |
-| `src/drivers/__init__.py`              | drivers       | Marks the hardware-abstraction package.                                                                 |
-| `src/drivers/base_driver.py`           | drivers       | `BaseDriver` abstract interface. **STALE** - imports `TestOutcome`/`TestConfig` from `logic.models`, which do not currently exist; not implemented by `MockHardware`. Slated for refactor. |
-| `src/drivers/mock_hardware.py`         | drivers       | `MockHardware`; Qt-free simulator. Generic `execute_command(name, args) -> float` dispatch supporting `readchannel`, `setvoltage`, `relay`, `getid`. Exposes `MEASUREMENT_COMMANDS`. |
-| `src/data/limits.json`                 | data (config) | **Legacy** - JSON spec limits superseded by inline `Limits` in `.tst` files. Retained on disk; no longer loaded at runtime. |
-| `src/data/database.db`                 | data (state)  | SQLite database holding historical `test_runs` and `test_results`. Created on first run.                |
-| `src/data/sequence.tst`                | data (config) | Default test-sequence script loaded on launch when no other script has been picked via "Load Script".   |
-| `src/data/demo_system.tst`             | data (config) | Comprehensive demo script exercising every supported keyword (`Critical`, `Limits`, `Unit`) and command (`setvoltage`, `readchannel`, `relay`, `getid`, `Delay`). |
-| `requirements.txt`                     | tooling       | Runtime dependency pin: `PySide6>=6.6.0`.                                                               |
-| `.pylintrc`                            | tooling       | Pylint config; whitelists PySide6 C-extensions to silence `no-name-in-module`.                          |
-| `DOC/FILE_MANIFEST.md`                 | docs          | This file.                                                                                              |
-| `DOC/ARCHITECTURE_DEEP_DIVE.md`        | docs          | Threading model, hybrid data strategy, UI composition, signal map, ER diagram, maintenance protocol.    |
-| `DOC/SPECIFICATIONS.md`                | docs          | Pinned environment: Python, GUI, storage, OS target, deployment tooling.                                |
-| `DOC/TECH_STACK.md`                    | docs          | Required engineering competencies and paradigms.                                                        |
-| `DOC/DEVELOPMENT_RULES.md`             | docs          | Non-negotiable architectural guardrails with verification hints.                                        |
-| `DOC/KEYWORDS_DICTIONARY.md`           | docs          | Reference for every keyword (`:`, `Critical`, `Limits`, `Unit`) and command (`Delay`, `setvoltage`, `relay`, `getid`, `readchannel`) supported by the `.tst` script language. |
-| `README.md`                            | docs          | Top-level project pointer; delegates to `DOC/` for everything authoritative.                            |
+> Synced to the source tree on 2026-06-07 by an external code audit. Files that
+> were previously undocumented are flagged **(NEW)**; files whose described
+> behaviour no longer matches the code are flagged **(CHANGED)**; non-functional
+> artifacts are flagged **(STALE/UNUSED)**.
 
-## Known stale artifacts
+## Entry point & top-level modules
 
-- `src/drivers/base_driver.py` references `TestOutcome` and `TestConfig` from
-  `logic.models`, but neither symbol is defined there. The current runtime path
-  uses `MockHardware` directly (no `BaseDriver` subclassing). This file should
-  either be re-aligned with the real driver contract or removed; flagged here
-  so future maintainers do not assume it is wired in.
+| File Path                | Module | Short Description                                                                                                  |
+| ------------------------ | ------ | ----------------------------------------------------------------------------------------------------------------- |
+| `src/main.py`            | entry  | Sets the Windows AppUserModelID, seeds user data, acquires `SingleInstanceLock`, then runs a login → `MainWindow` loop that supports logout-and-switch-user. |
+| `src/env.py`             | config | **(NEW)** `.env` loader (`load_env_once()`) + typed getters (`get_str`, `get_bool`, `get_list`). Loads once at import; degrades gracefully if `python-dotenv` is absent. |
+| `src/config.py`          | config | Feature flags (`SHOW_LIVE_MONITOR`, `SHOW_SEARCH_BAR`), `UUT_TYPES` list, secrets, and station identity — all sourced from the environment via `env.py`. Zero hardcoded secrets. |
+| `src/paths.py`           | config | Dev/frozen path resolution. `resource_path()` for bundled read-only files, `user_data_path()` for writable state, `user_tmp_path()` for scratch files swept on startup, `ensure_user_data_seeded()` to copy seed `.tst`/`limits.json` next to the EXE. |
+| `src/version.py`         | config | Single source of truth for `__version__`; reads `APP_VERSION` from `.env` (default `"0.1.0-Beta"`). |
+
+## `src/logic/` — Qt-free business logic (plus the two sanctioned QThreads)
+
+| File Path                       | Short Description                                                                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/logic/__init__.py`         | Package marker.                                                                                                                                    |
+| `src/logic/models.py`           | Domain types: `TestLimit` (legacy, frozen slots), `TestStep`, `ScriptDocument` (metadata + steps), `TestResultPayload` `TypedDict`, `TestRunRecord`. **Note:** `TestOutcome`/`TestConfig` referenced by `base_driver.py` are **not** defined here. |
+| `src/logic/test_engine.py`      | `TestRunnerThread(QThread)`. Script-driven runner; loops, retries, `Critical` abort, `stop_on_fail`, cooperative cancel, **pause/resume**, `Prompt` via `threading.Event`, per-result secure logging, and `report_snapshot()` for PDF/CSV. Emits 8 signals. |
+| `src/logic/script_manager.py`   | `ScriptManager`; discovery, raw read/write, `load_document()` parser (→ `ScriptDocument`), and `serialize_ordered_steps()` for version archiving. Recognizes `PartNum:` header, `Critical`, `Limits`, `Target/Tol`, `Unit`, `Retry`. Defines `ScriptParseError`. |
+| `src/logic/database_manager.py` | **(CHANGED)** `DatabaseManager`; thin facade over `logic/db/` sub-modules. Holds the class-level `_schema_ready` bootstrap flag. Public API unchanged for all callers. |
+| `src/logic/db/__init__.py`      | Package marker for the `logic.db` repository sub-package. |
+| `src/logic/db/connection.py`    | `open_conn(db_path)` — shared SQLite connection factory with `row_factory` and `PRAGMA foreign_keys = ON`. |
+| `src/logic/db/schema.py`        | `create_tables()` — DDL for all five tables plus the idempotent `connection_params` `ALTER TABLE` migration, and `_seed_admin()` bootstrap. |
+| `src/logic/db/users.py`         | User CRUD: `verify_login`, `create_user`, `delete_user`, `update_user`, `change_password`, `list_users`. |
+| `src/logic/db/test_versions.py` | Test-version catalog: `add_test_version`, `list_test_versions`, `get_test_version`, `delete_test_version`, `version_exists`. |
+| `src/logic/db/audit.py`         | `log_audit_action` (writes DB row + `SecureLogger` side-channel), `get_audit_logs`. |
+| `src/logic/db/test_runs.py`     | `save_run(record: TestRunRecord)` — inserts one `test_runs` row + N `test_results` rows atomically. |
+| `src/logic/auth_manager.py`     | `AuthManager`; thin facade over `DatabaseManager.verify_login`/`change_password`. `validate_password_strength()` is defined but **never called**. |
+| ~~`src/logic/limit_manager.py`~~ | **DELETED (2026-06-07)** — was STALE/UNUSED. `LimitManager` was not imported anywhere; `limits.json` keys matched no current test names. |
+| `src/logic/file_lock.py`        | `SingleInstanceLock`; **Windows:** named mutex via `CreateMutexW` (`Local\DFX_ate_singleton`) — OS releases automatically on process death, no stale-lock logic needed. **POSIX:** PID lock file with `os.kill` liveness probe. |
+| `src/logic/secure_logger.py`    | **(NEW)** `SecureLogger`; Fernet-encrypted, append-only daily JSON log (`logs/sys_YYYYMMDD.dat`). Process-wide singleton via `get_secure_logger()`. Key derived from the hardcoded `LOG_ENCRYPTION_PASSWORD`. |
+| `src/logic/monitor_engine.py`   | **(NEW)** `MonitorThread(QThread)`; emits simulated voltage/current readings on an interval. **Second QThread in `logic/`** (not covered by the old "only `test_engine` uses QtCore" exception). |
+| `src/logic/report_generator.py` | **(NEW)** `ReportGenerator` + module functions; PDF (ReportLab + PyPDF2 logo watermark, admin-only encryption) and CSV reports with role-based detail; auto-archives under `data/results/<UUT>/<Serial>/`. |
+
+## `src/drivers/` — hardware abstraction
+
+| File Path                     | Short Description                                                                                                                                |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/drivers/__init__.py`     | Package marker.                                                                                                                                  |
+| `src/drivers/base_driver.py`  | `BaseDriver(ABC)` — real abstract contract (`connect`, `disconnect`, `execute_command`, `measurement_commands` property) plus an error hierarchy (`HardwareError`, `ConnectionLostError`, `CommandTimeoutError`, `UnknownCommandError`). |
+| `src/drivers/mock_hardware.py`| `MockHardware(BaseDriver)`; Qt-free simulator. `execute_command` raises `UnknownCommandError` for unknown commands; `measurement_commands` returns `frozenset({"readchannel"})`. `connect()`/`disconnect()` called by the runner lifecycle. |
+
+## `src/ui/` — Qt presentation layer
+
+| File Path                              | Short Description                                                                                                                          |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/ui/__init__.py`                   | Package marker.                                                                                                                            |
+| `src/ui/report_worker.py`              | **(NEW)** `ReportWorker(QThread)`; runs `ReportGenerator.generate_pdf_auto_archive` off the GUI thread; emits `archived(str)` or `failed(str)`. |
+| `src/ui/ui_helpers.py`                 | `attach_password_visibility_toggle()` and an emoji-icon helper, shared by login/user/audit dialogs.                              |
+| `src/ui/widgets/__init__.py`           | Package marker.                                                                                                                            |
+| `src/ui/widgets/control_panel.py`      | **(CHANGED)** `ControlPanelWidget`; start/stop, save-log checkbox, user box (detachable via `take_user_box`), unit fields, status group, loop count, stop-on-fail. Emits `start_requested`/`stop_requested` signals; exposes `set_running_state(bool)`. Pass/fail labels use objectName QSS selectors (Rule 4 compliant). |
+| `src/ui/widgets/instrument_panel.py`   | **(NEW)** `InstrumentPanelWidget`; live voltage/current readout rows, fed by `MonitorThread`.                                              |
+| `src/ui/widgets/result_row_delegate.py`| **(NEW)** `ResultRowDelegate`; paints PASS/FAIL cell tints in the results table.                                                          |
+| `src/ui/views/__init__.py`             | Package marker.                                                                                                                            |
+| `src/ui/views/main_window.py`          | **(CHANGED)** `MainWindow`; ribbon, menu bar, role gating, pre-test flow, live monitor wiring, trace log, results table, report export, audit logging, and runner wiring. Uses `ControlPanelWidget.start_requested`/`stop_requested` intent signals and `set_running_state()`. |
+| ~~`src/ui/views/main_window.ui`~~      | **DELETED (2026-06-07)** — was STALE/UNUSED. Qt Designer file; UI is built entirely in Python; `loadUi`/`QUiLoader` appeared nowhere. |
+| `src/ui/views/login_dialog.py`         | **(CHANGED)** `LoginDialog`; authenticates via `AuthManager`, writes a "User Logged In" audit row. Loads `style.qss` directly. No password-change flow. |
+| `src/ui/views/pre_test_dialog.py`      | **(NEW)** `PreTestDialog`; collects UUT type / serial / tester name before a run.                                                          |
+| `src/ui/views/select_test_dialog.py`   | **(NEW)** `SelectTestDialog`; pick a version from the DB catalog; writes its content to a temp `.tst` for execution.                       |
+| `src/ui/views/sequence_editor_dialog.py`| **(NEW)** `SequenceEditorDialog`; reorder/add/remove active steps (drag-drop), optionally save a new catalog version.                     |
+| `src/ui/views/script_editor.py`        | `ScriptEditorDialog`; raw `.tst` text editor. **Only used by the Version Manager** (`_edit`), not from the main ribbon.                    |
+| `src/ui/views/test_result_dialog.py`   | **(NEW)** `TestResultDialog`; full-screen PASS/FAIL banner shown at end of run for **all** roles. Inline-styled.                           |
+| `src/ui/views/user_management_dialog.py`| `UserManagementDialog` + `UserEditDialog`; Admin CRUD over users/roles. Does **not** call `validate_password_strength`.                   |
+| `src/ui/views/version_manager_dialog.py`| **(NEW)** `VersionManagerDialog` + `ImportTestMetaDialog`; Admin import/view/edit/delete/export of test versions and connection params.   |
+| `src/ui/views/audit_viewer_dialog.py`  | **(NEW)** `AuditViewerDialog`; Admin viewer for DB audit rows and decrypted daily `sys_*.dat` hardware logs (password-gated export).       |
+| `src/ui/views/connection_settings_form.py`| **(NEW)** `ConnectionSettingsForm`; edits a `PORT\|BAUD\|PARITY\|STOP_BITS` string; enumerates COM ports via `pyserial` when available.   |
+| `src/ui/assets/light_theme.qss`        | Light QSS theme (applied at the `QMainWindow` root).                                                                                       |
+| `src/ui/assets/dark_theme.qss`         | Dark QSS theme (applied at the `QMainWindow` root).                                                                                        |
+| `src/ui/assets/style.qss`              | **(CHANGED)** Login-screen stylesheet. Contrary to the previous manifest, it **is** loaded — by `LoginDialog`.                            |
+| `src/ui/assets/icons/`                 | App icon, brand logo, and theme/ribbon SVG/PNG icons (`BirdAppIcon.png`, `BirdLogo.png`, `moon.svg`, `sun.svg`, `logout.svg`, `power.svg`, …). |
+
+## `src/data/` — seed config & writable state
+
+| File Path                       | Kind          | Short Description                                                                                              |
+| ------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
+| `src/data/sequence.tst`         | config (seed) | Default sequence loaded on launch for non-operator roles.                                                     |
+| `src/data/demo_system.tst`      | config (seed) | Demo script exercising every keyword/command.                                                                 |
+| `src/data/28VDC Power Supply Input.tst`           | config | Real-world sample sequence.                                                                          |
+| `src/data/SPREOS Power Supply Main Card.tst`      | config | Real-world sample sequence.                                                                          |
+| `src/data/12VDC RF Module Stabilized Output Interface.tst` | config | Real-world sample sequence.                                                                 |
+| `src/data/limits.json`          | config        | **(STALE/UNUSED)** Legacy JSON limits. Keys do not match any current `.tst` test names. Still seeded by `paths.py` and bundled by the spec. |
+| `src/data/database.db`          | state         | SQLite DB (runs, results, users, versions, audit). Created on first run; git-ignored.                          |
+| `src/data/logs/`                | state         | Encrypted daily hardware/system logs (`sys_YYYYMMDD.dat`); git-ignored.                                        |
+| `src/data/results/`             | state         | Auto-archived PDF reports under `<UUT>/<Serial>/`; git-ignored.                                                 |
+| ~~`src/data/secure_system.log`~~ | state        | **DELETED (2026-06-07)** — was STALE. Older plaintext log artifact superseded by `logs/sys_*.dat`. |
+| `src/data/tmp/`                 | state         | App scratch directory; created on startup and swept clean by `_sweep_tmp()` in `main.py`. Temp `.tst` files from `SelectTestDialog` land here instead of the OS `%TEMP%`. |
+
+## Build & tooling
+
+| File Path             | Short Description                                                                                                  |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `requirements.txt`    | Six runtime deps: `PySide6`, `reportlab`, `PyPDF2`, `cryptography`, `pyserial`, `python-dotenv`.                   |
+| `DFX_Tester.spec`     | **(NEW)** PyInstaller onedir spec. Bundles assets + seed data; force-includes `cryptography`. **Excludes `serial`** even though `connection_settings_form.py` imports it (falls back to a static port list — see audit). |
+| `build.ps1`           | **(NEW)** PowerShell build driver: installs deps + PyInstaller, cleans, runs the spec, prints the bundle path.    |
+| `.pylintrc`           | Pylint config; whitelists PySide6 C-extensions.                                                                   |
+| `.gitignore`          | Ignores build output, venvs, `*.db`/`*.lock`/`*.log`, `src/data/results/`, `*.csv/*.json/*.txt`, and `*PLAN*.md`. |
+
+## Documentation (`DOC/`)
+
+| File Path                       | Short Description                                                                  |
+| ------------------------------- | --------------------------------------------------------------------------------- |
+| `DOC/.env.example`              | Template with every supported `.env` key, dummy/safe values, and usage comments. Copy to `.env` next to the EXE (or repo root). **Do not commit `.env`**. |
+| `DOC/FILE_MANIFEST.md`          | This file.                                                                         |
+| `DOC/ARCHITECTURE_DEEP_DIVE.md` | Threading, data strategy, subsystems, signal map, schema, boot flow, RBAC.        |
+| `DOC/SPECIFICATIONS.md`         | Pinned environment, dependencies, deployment.                                     |
+| `DOC/TECH_STACK.md`             | Required engineering competencies.                                                |
+| `DOC/DEVELOPMENT_RULES.md`      | Architectural guardrails (with current-reality notes).                            |
+| `DOC/KEYWORDS_DICTIONARY.md`    | `.tst` script language reference.                                                 |
+| `README.md`                     | Top-level project overview (note: still uses the old role name "Engineer").       |
+| `PROJECT_CONTEXT.md`            | **(NEW)** Condensed team reference: what the project is, folder map, RBAC table, DB schema, .tst language, threading model, .env keys, architectural rules, and Q&A hooks. Intended to be loaded as context into Claude web for team Q&A. |
+
+## Files referenced by old docs that do NOT exist
+
+- `src/ui/views/change_password_dialog.py` — never present in the tree; there is no
+  password-change dialog and no `must_change_pwd` flow anywhere in the code.

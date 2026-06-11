@@ -69,7 +69,7 @@ class ScriptEditorDialog(QDialog):
         root.addWidget(self._editor, stretch=1)
 
         self._status_label = QLabel("")
-        self._status_label.setStyleSheet("color: #64748b;")
+        self._status_label.setObjectName("lbl_status_hint")
         root.addWidget(self._status_label)
 
         button_row = QHBoxLayout()

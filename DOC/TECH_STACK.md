@@ -4,6 +4,10 @@ The competencies a contributor needs to be effective in this codebase.
 This is not a tutorial - it is a checklist of what you should already know
 (or be willing to learn before merging).
 
+> **Audit sync (2026-06-07):** Added the cryptography, PDF, and serial
+> competencies the app actually relies on, and corrected the "single QtCore
+> exception" claim.
+
 ---
 
 ## 1. Modular Object-Oriented Python
@@ -18,17 +22,21 @@ exist only as small, pure helpers. Required fluency:
 - **`TypedDict`** for cross-thread payload shapes (`TestResultPayload`).
 - **`abc.ABC`** for hardware interfaces (`BaseDriver`).
 - **The "Manager" pattern** as used here: one class owns one external
-  resource. Examples: `LimitManager` (JSON), `DatabaseManager` (SQLite),
-  `ScriptManager` (`.tst` files), `AuthManager` (credentials). New external
-  resources should follow the same pattern.
+  resource. Active examples: `DatabaseManager` (SQLite — though it now spans
+  runs, users, versions, and audit, so it is closer to a repository facade than
+  a single-resource manager), `ScriptManager` (`.tst` files), `AuthManager`
+  (credentials, a thin facade over `DatabaseManager`), `SecureLogger` (encrypted
+  logs), and `ReportGenerator` (PDF/CSV). `LimitManager` (JSON) still exists but
+  is **legacy/unused**. New external resources should follow the same pattern.
 
 ## 2. Asynchronous multi-threading with Qt
 
 The runtime correctness of the app depends on knowing the threading rules.
 Required fluency:
 
-- **`QThread` subclassing** with overridden `run()` (as in
-  `TestRunnerThread`) and the cooperative-cancel pattern via a boolean flag.
+- **`QThread` subclassing** with overridden `run()` (two subclasses today:
+  `TestRunnerThread` and `MonitorThread`) and the cooperative-cancel pattern via
+  a boolean flag plus `threading.Event`s for pause and prompt synchronization.
 - **`Signal` / `Slot`** declarations and connections. Understanding that
   cross-thread connections become `QueuedConnection` automatically and that
   payloads must be picklable / Qt-serializable.
@@ -80,10 +88,33 @@ The UI is themed entirely through Qt Style Sheets. Required fluency:
   code works identically when launched from source and when frozen by
   PyInstaller.
 
-## 6. Tooling expectations
+## 6. Cryptography & secure logging
+
+- **`cryptography.fernet`** — symmetric authenticated encryption of one JSON
+  record per line. Understanding that a Fernet key derived from a **constant**
+  (`config.LOG_ENCRYPTION_PASSWORD`) provides tamper-evidence/obfuscation, not
+  real confidentiality.
+- **`PBKDF2HMAC`** (cryptography) for the log key, and **`hashlib.pbkdf2_hmac` +
+  `secrets`** for password hashing/salting and constant-time comparison
+  (`secrets.compare_digest`).
+
+## 7. PDF / CSV reporting
+
+- **ReportLab** — `SimpleDocTemplate`, `LongTable` (multi-page, `repeatRows`),
+  `TableStyle`, `Paragraph`, and `canvas`-based watermark generation.
+- **PyPDF2** — `PdfReader`/`PdfWriter`, `page.merge_page()` for the logo overlay,
+  and `writer.encrypt()` for Admin-only password-protected reports.
+- **`csv`** (stdlib) for the role-gated CSV export.
+
+## 8. Serial enumeration (optional)
+
+- **`pyserial`** — `serial.tools.list_ports.comports()` for COM discovery,
+  imported defensively so the app still runs when pyserial is absent.
+
+## 9. Tooling expectations
 
 - **pylint** clean (per `.pylintrc`).
 - **Type hints on all public signatures.** Internal helpers may omit them
   if obvious.
 - **No new third-party dependencies** without explicit approval (see
-  `SPECIFICATIONS.md` -> Dependencies).
+  `SPECIFICATIONS.md` -> Dependencies), and keep `DFX_Tester.spec` in sync.

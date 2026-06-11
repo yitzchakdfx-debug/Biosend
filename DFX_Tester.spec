@@ -41,7 +41,7 @@ datas = [
 # Force-include cryptography backends — they are lazy imports that
 # PyInstaller's static analysis sometimes misses, and the secure log
 # Fernet path will blow up at runtime without them.
-hiddenimports = collect_submodules("cryptography")
+hiddenimports = collect_submodules("cryptography") + ["dotenv"]
 
 excludes = [
     # Heavy PySide6 modules this app does not use. Excluding the Python
@@ -100,7 +100,7 @@ excludes = [
     "numpy",
     "pandas",
     "scipy",
-    "serial",  # listed in requirements but unused in current code
+    # "serial" removed — connection_settings_form.py imports pyserial for COM-port enumeration
     # NOTE: do NOT exclude PIL — reportlab.lib.utils imports it at load time.
 ]
 

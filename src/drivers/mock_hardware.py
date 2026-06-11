@@ -12,8 +12,10 @@ import random
 import time
 from typing import ClassVar
 
+from drivers.base_driver import BaseDriver, UnknownCommandError
 
-class MockHardware:
+
+class MockHardware(BaseDriver):
     """Simulates hardware instrument responses without any Qt dependencies."""
 
     MEASUREMENT_COMMANDS: ClassVar[frozenset[str]] = frozenset({"readchannel"})
@@ -32,40 +34,29 @@ class MockHardware:
         self._rng = random.Random()
 
     def connect(self) -> bool:
-        """Optional: simulate session open (not required for execute_command)."""
         time.sleep(0.5)
         self.connected = True
         return True
 
     def disconnect(self) -> None:
-        """Optional: release simulated session."""
         self.connected = False
 
-    def execute_command(self, command: str, args: list[str]) -> float:
-        """Dispatch a single hardware command.
+    @property
+    def measurement_commands(self) -> frozenset[str]:
+        return self.MEASUREMENT_COMMANDS
 
-        Returns the measured value for measurement commands; returns `0.0`
-        for side-effect commands. Raises `ValueError` for unknown commands.
-        """
+    def execute_command(self, command: str, args: list[str]) -> float:
         cmd = command.lower()
 
         if cmd == "readchannel":
             channel = int(args[0]) if args else 0
             return self._read_channel(channel)
 
-        if cmd == "setvoltage":
+        if cmd in ("setvoltage", "relay", "getid"):
             time.sleep(0.05)
             return 0.0
 
-        if cmd == "relay":
-            time.sleep(0.05)
-            return 0.0
-
-        if cmd == "getid":
-            time.sleep(0.05)
-            return 0.0
-
-        raise ValueError(f"Unknown hardware command: {command!r}")
+        raise UnknownCommandError(f"Unknown hardware command: {command!r}")
 
     def _read_channel(self, channel: int) -> float:
         nominal, jitter, decimals = self._CHANNEL_NOMINALS.get(

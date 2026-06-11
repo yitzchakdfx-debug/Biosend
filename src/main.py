@@ -18,7 +18,16 @@ if str(_SRC) not in sys.path:
 from ui.views.login_dialog import LoginDialog
 from ui.views.main_window import MainWindow
 from logic.file_lock import AlreadyRunningError, SingleInstanceLock
-from paths import ensure_user_data_seeded, resource_path, user_data_path
+from paths import ensure_user_data_seeded, resource_path, user_data_path, user_tmp_path
+
+
+def _sweep_tmp() -> None:
+    """Delete leftover temp files from a previous crash before the next session."""
+    import shutil
+    tmp = user_tmp_path()
+    if tmp.is_dir():
+        shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True, exist_ok=True)
 
 
 def main() -> int:
@@ -29,6 +38,7 @@ def main() -> int:
         print(f"Note: Could not set AppUserModelID: {e}")
 
     ensure_user_data_seeded()
+    _sweep_tmp()
 
     app = QApplication(sys.argv)
     icon_path = resource_path("ui", "assets", "icons", "BirdAppIcon.png")

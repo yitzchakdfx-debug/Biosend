@@ -258,6 +258,28 @@ class ScriptManager:
         body = "\n".join(lines).rstrip()
         return body + "\n" if body else "\n"
 
+    _INVALID_NAME_CHARS = frozenset(r'\/:*?"<>|')
+
+    @staticmethod
+    def validate_version_name(name: str, existing_names: list[str] | None = None) -> str:
+        """Validate and return a stripped version name.
+
+        Raises ValueError with a user-facing message on failure.
+        """
+        clean = name.strip()
+        if not clean:
+            raise ValueError("Version name cannot be empty.")
+        bad = ScriptManager._INVALID_NAME_CHARS & set(clean)
+        if bad:
+            chars = "".join(sorted(bad))
+            raise ValueError(
+                f'Version name cannot contain: {chars}\n'
+                f'Forbidden characters: {r"\\/:*?\"<>|"}'
+            )
+        if existing_names is not None and clean in existing_names:
+            raise ValueError(f"Version name {clean!r} already exists.")
+        return clean
+
     def _validate_suffix(self, path: Path) -> None:
         if path.suffix.lower() != self.SCRIPT_SUFFIX:
             raise ValueError(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import html
-import re
 from datetime import datetime
 from pathlib import Path
 
@@ -38,9 +37,10 @@ from PySide6.QtWidgets import (
 
 from config import SHOW_LIVE_MONITOR, SHOW_SEARCH_BAR
 from logic.database_manager import DatabaseManager
+from ui.report_worker import ReportWorker
 from logic.models import TestResultPayload
 from logic.monitor_engine import MonitorThread
-from logic.report_generator import ReportGenerator
+from logic.report_generator import ReportGenerator, sanitize_path_segment
 from logic.script_manager import ScriptManager, ScriptParseError
 from logic.secure_logger import get_secure_logger
 from logic.test_engine import TestRunnerThread
@@ -100,6 +100,7 @@ class MainWindow(QMainWindow):
             self._secure = None
         self._last_run_meta: dict | None = None
         self._last_run_rows: list[dict] = []
+        self._report_worker: ReportWorker | None = None
         self._setup_ui()
         if SHOW_LIVE_MONITOR:
             self.monitor_thread = MonitorThread(parent=self)
@@ -266,13 +267,9 @@ class MainWindow(QMainWindow):
         return self._RESULTS_DIR
 
     def _default_export_basename(self) -> str:
-        def _sanitize(value: str) -> str:
-            cleaned = re.sub(r"\s+", "_", value.strip())
-            return re.sub(r'[\\/:*?"<>|]+', "", cleaned)
-
-        part = _sanitize(self.control_panel.edit_part_number.text())
-        serial = _sanitize(self.control_panel.edit_serial_number.text())
-        if part and serial:
+        part = sanitize_path_segment(self.control_panel.edit_part_number.text())
+        serial = sanitize_path_segment(self.control_panel.edit_serial_number.text())
+        if part != "unknown" and serial != "unknown":
             return f"{part}_{serial}"
         return "report"
 
@@ -624,8 +621,8 @@ class MainWindow(QMainWindow):
         v_splitter.setCollapsible(1, False)
         v_splitter.setHandleWidth(4)
 
-        self.control_panel.btn_start.clicked.connect(self._on_start_clicked)
-        self.control_panel.btn_stop.clicked.connect(self.stop_tests)
+        self.control_panel.start_requested.connect(self._on_start_clicked)
+        self.control_panel.stop_requested.connect(self.stop_tests)
         self.control_panel.edit_part_number.textEdited.connect(
             self._mark_part_number_user_edited
         )
@@ -745,21 +742,24 @@ class MainWindow(QMainWindow):
         th = self.test_thread
         if th is None:
             return
-        try:
-            meta, rows = th.report_snapshot()
-            logical_name = f"{self._catalog_test_name} {getattr(self, '_catalog_version', '')}".strip()
-            meta["test_program_name"] = logical_name
-            self._last_run_meta = meta
-            self._last_run_rows = list(rows)
-            if not self.control_panel.chk_save_log.isChecked():
-                self.append_trace("Save as log disabled — skipping PDF archive.")
-                return
-            pdf_path = ReportGenerator().generate_pdf_auto_archive(
-                meta, rows, self._current_role()
-            )
-            self.append_trace(f"Report archived: {pdf_path.name}")
-        except Exception as exc:
-            self.append_trace(f"Report generation failed: {exc!s}")
+        meta, rows = th.report_snapshot()
+        logical_name = f"{self._catalog_test_name} {getattr(self, '_catalog_version', '')}".strip()
+        meta["test_program_name"] = logical_name
+        self._last_run_meta = meta
+        self._last_run_rows = list(rows)
+        if not self.control_panel.chk_save_log.isChecked():
+            self.append_trace("Save as log disabled — skipping PDF archive.")
+            return
+        self._report_worker = ReportWorker(meta, rows, self._current_role(), parent=self)
+        self._report_worker.archived.connect(
+            lambda p: self.append_trace(f"Report archived: {Path(p).name}")
+        )
+        self._report_worker.failed.connect(
+            lambda e: self.append_trace(f"Report generation failed: {e}")
+        )
+        self._report_worker.finished.connect(self._report_worker.deleteLater)
+        self._report_worker.finished.connect(lambda: setattr(self, "_report_worker", None))
+        self._report_worker.start()
 
     def load_script(self) -> None:
         """Load a test from the database catalog (temp file) for every role."""
@@ -1000,6 +1000,7 @@ class MainWindow(QMainWindow):
         self.test_thread.prompt_request.connect(self._on_prompt_request)
         self.test_thread.script_log.connect(self._on_script_log)
         self.test_thread.finished.connect(self.on_tests_finished)
+        self.test_thread.finished.connect(self.test_thread.deleteLater)
 
         try:
             DatabaseManager().log_audit_action(
@@ -1074,6 +1075,16 @@ class MainWindow(QMainWindow):
             self.test_thread.stop()
             self.append_trace("Stopping sequence...")
 
+    def _shutdown_threads(self) -> None:
+        if self.test_thread is not None and self.test_thread.isRunning():
+            self.test_thread.stop()
+            if not self.test_thread.wait(5000):
+                self.append_trace("Warning: test thread did not stop within 5s.")
+        if self._report_worker is not None and self._report_worker.isRunning():
+            self._report_worker.wait(5000)
+        if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
+            self.monitor_thread.stop()
+
     def logout(self) -> None:
         """Closes the main window and signals the application to restart the login flow."""
         confirm = QMessageBox.question(
@@ -1093,8 +1104,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             self._cleanup_operator_temp()
-            if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
-                self.monitor_thread.stop()
+            self._shutdown_threads()
             self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self.setProperty("logout_requested", True)
             app = QApplication.instance()
@@ -1103,6 +1113,17 @@ class MainWindow(QMainWindow):
             self.close()
 
     def closeEvent(self, event) -> None:
+        if self.test_thread is not None and self.test_thread.isRunning():
+            confirm = QMessageBox.question(
+                self,
+                "Test in progress",
+                "A test is still running. Stop it and exit?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
         app = QApplication.instance()
         if app is not None and not bool(app.property("logout_requested")):
             try:
@@ -1114,9 +1135,8 @@ class MainWindow(QMainWindow):
                 )
             except Exception:
                 pass
+        self._shutdown_threads()
         self._cleanup_operator_temp()
-        if hasattr(self, "monitor_thread") and self.monitor_thread.isRunning():
-            self.monitor_thread.stop()
         super().closeEvent(event)
 
     def _on_loop_started(self, loop_number: int, loop_total: int) -> None:
@@ -1206,8 +1226,7 @@ class MainWindow(QMainWindow):
                 pass
             th.resume_pause()
 
-        self.control_panel.btn_start.setText("Start")
-        self.control_panel.btn_stop.setEnabled(False)
+        self.control_panel.set_running_state(False)
         self.control_panel.edit_part_number.setReadOnly(False)
         if self._active_script_path.is_file():
             self.control_panel.edit_part_number.setReadOnly(True)

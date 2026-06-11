@@ -37,6 +37,16 @@ class ReportGenerator:
     def __init__(self, base_dir: Path | None = None) -> None:
         self._base = base_dir if base_dir is not None else user_data_path("results")
 
+    def suggested_export_path(self, run_meta: dict[str, Any], suffix: str = ".pdf") -> Path:
+        """Return the path that ``generate_pdf_auto_archive`` would write to.
+
+        Useful for showing the operator a preview destination before the run
+        completes.  The timestamp component will differ from the actual write
+        time; callers should treat this as an *approximate* path.
+        """
+        archive_dir, stem = self._resolved_archive_paths(run_meta)
+        return archive_dir / (stem + suffix)
+
     def _resolved_archive_paths(self, run_meta: dict[str, Any]) -> tuple[Path, str]:
         """Sanitized subdirectory (uut/serial), timestamp stem for filenames."""
         uut_seg = sanitize_path_segment(str(run_meta.get("uut_type", "")).strip())

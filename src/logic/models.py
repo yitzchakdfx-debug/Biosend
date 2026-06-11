@@ -59,6 +59,23 @@ class TestResultPayload(TypedDict):
     is_measurement: bool
 
 
+_VALID_ROLES: frozenset[str] = frozenset({"Operator", "Technician", "Admin"})
+
+
+def normalize_role(raw: str) -> str:
+    """Normalize a role string to Title Case and validate it.
+
+    Raises ValueError for unknown roles so callers get a single consistent
+    error message without duplicating the role list.
+    """
+    normalized = raw.strip().title()
+    if normalized not in _VALID_ROLES:
+        raise ValueError(
+            f"Invalid role {raw!r}. Expected one of: {', '.join(sorted(_VALID_ROLES))}"
+        )
+    return normalized
+
+
 @dataclass
 class TestRunRecord:
     """Final payload for one completed test run before database insertion."""

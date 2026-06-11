@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
+import uuid
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -21,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from logic.database_manager import DatabaseManager
+from paths import user_tmp_path
 
 
 class SelectTestDialog(QDialog):
@@ -96,11 +96,9 @@ class SelectTestDialog(QDialog):
             self._populate()
             return
         try:
-            fd, path_str = tempfile.mkstemp(
-                suffix=".tst", prefix="dfx_op_", text=True
-            )
-            os.close(fd)
-            self._temp_path = Path(path_str)
+            tmp_dir = user_tmp_path()
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            self._temp_path = tmp_dir / f"dfx_op_{uuid.uuid4().hex}.tst"
             self._temp_path.write_text(rec["test_content"], encoding="utf-8")
         except OSError as exc:
             QMessageBox.critical(self, "Select Test", f"Could not create temp file:\n{exc}")

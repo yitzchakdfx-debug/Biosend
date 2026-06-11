@@ -248,19 +248,10 @@ class VersionManagerDialog(QDialog):
         )
         if not ok:
             return
-        new_ver = new_ver.strip()
-        if not new_ver:
-            QMessageBox.warning(
-                self, "Update from .tst", "Version name cannot be empty."
-            )
-            return
-        invalid_chars = r'\/:*?"<>|'
-        if any(ch in new_ver for ch in invalid_chars):
-            QMessageBox.warning(
-                self,
-                "Invalid Name",
-                f"Version name cannot contain any of the following characters:\n{invalid_chars}",
-            )
+        try:
+            new_ver = ScriptManager.validate_version_name(new_ver)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Name", str(exc))
             return
         if self._db.version_exists(test_name, new_ver):
             QMessageBox.warning(
@@ -366,17 +357,10 @@ class VersionManagerDialog(QDialog):
         )
         if not ok:
             return
-        new_ver = new_ver.strip()
-        if not new_ver:
-            QMessageBox.warning(self, "Edit", "Version name cannot be empty.")
-            return
-        invalid_chars = r'\/:*?"<>|'
-        if any(ch in new_ver for ch in invalid_chars):
-            QMessageBox.warning(
-                self,
-                "Invalid Name",
-                f"Version name cannot contain any of the following characters:\n{invalid_chars}",
-            )
+        try:
+            new_ver = ScriptManager.validate_version_name(new_ver)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Name", str(exc))
             return
         if self._db.version_exists(tname, new_ver):
             QMessageBox.warning(

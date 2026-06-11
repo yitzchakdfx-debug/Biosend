@@ -49,6 +49,11 @@ def user_data_path(*parts: str) -> Path:
     return _install_root().joinpath("data", *parts)
 
 
+def user_tmp_path(*parts: str) -> Path:
+    """Return a path inside the app's dedicated scratch directory (cleared on startup)."""
+    return _install_root().joinpath("tmp", *parts)
+
+
 _SEED_FILES = ("limits.json", "sequence.tst", "demo_system.tst")
 _seeded = False
 

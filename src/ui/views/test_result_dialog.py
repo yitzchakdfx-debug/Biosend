@@ -21,24 +21,16 @@ class TestResultDialog(QDialog):
         self.setFixedSize(480, 260)
 
         status_text = "Test Pass" if passed else "Test Fail"
-        banner_bg = "#22c55e" if passed else "#ef4444"
+        banner_name = "lbl_banner_pass" if passed else "lbl_banner_fail"
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 20)
         layout.setSpacing(16)
 
         self._banner = QLabel(status_text)
+        self._banner.setObjectName(banner_name)
         self._banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._banner.setMinimumHeight(120)
-        self._banner.setStyleSheet(
-            f"background-color: {banner_bg};"
-            "color: #000000;"
-            "font-size: 44pt;"
-            "font-weight: 900;"
-            "letter-spacing: 2px;"
-            "border-radius: 6px;"
-            "padding: 24px;"
-        )
         layout.addWidget(self._banner, stretch=1)
 
         button_row = QHBoxLayout()

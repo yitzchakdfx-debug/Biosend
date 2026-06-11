@@ -46,7 +46,7 @@ class PreTestDialog(QDialog):
 
         root.addLayout(form)
         self._error = QLabel("")
-        self._error.setStyleSheet("color: #ef4444;")
+        self._error.setObjectName("lbl_error")
         root.addWidget(self._error)
 
         buttons = QDialogButtonBox(
