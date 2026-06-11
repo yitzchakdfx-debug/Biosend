@@ -13,12 +13,20 @@ def save_run(db_path: Path, record: TestRunRecord) -> int:
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO test_runs "
-            "(operator, part_number, serial_number, overall_passed, start_time, end_time) "
-            "VALUES (?, ?, ?, ?, ?, ?);",
+            "(operator, batch_label, batch_index, part_number, serial_number, "
+            "slot_index, position_label, load_channel, load_serial_number, "
+            "overall_passed, start_time, end_time) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
             (
                 record.operator,
+                record.batch_label,
+                record.batch_index,
                 record.part_number,
                 record.serial_number,
+                record.slot_index,
+                record.position_label,
+                record.load_channel,
+                record.load_serial_number,
                 int(record.overall_passed),
                 record.start_time.isoformat(),
                 record.end_time.isoformat() if record.end_time else None,

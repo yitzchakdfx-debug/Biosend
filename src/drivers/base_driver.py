@@ -28,6 +28,9 @@ class BaseDriver(ABC):
     def disconnect(self) -> None: ...
 
     @abstractmethod
+    def activate_slot(self, slot_index: int, *, load_serial_number: str = "") -> None: ...
+
+    @abstractmethod
     def execute_command(self, command: str, args: list[str]) -> float: ...
 
     @property

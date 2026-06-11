@@ -20,13 +20,33 @@ def create_tables(db_path, default_admin_username: str,
             """CREATE TABLE IF NOT EXISTS test_runs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             operator TEXT,
+            batch_label TEXT NOT NULL DEFAULT '',
+            batch_index INTEGER NOT NULL DEFAULT 1,
             part_number TEXT,
             serial_number TEXT,
+            slot_index INTEGER NOT NULL DEFAULT 1,
+            position_label TEXT NOT NULL DEFAULT '',
+            load_channel TEXT NOT NULL DEFAULT '',
+            load_serial_number TEXT NOT NULL DEFAULT '',
             overall_passed INTEGER,
             start_time TEXT,
             end_time TEXT
         );"""
         )
+        run_cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(test_runs);").fetchall()
+        }
+        for name, ddl in (
+            ("batch_label", "ALTER TABLE test_runs ADD COLUMN batch_label TEXT NOT NULL DEFAULT '';"),
+            ("batch_index", "ALTER TABLE test_runs ADD COLUMN batch_index INTEGER NOT NULL DEFAULT 1;"),
+            ("slot_index", "ALTER TABLE test_runs ADD COLUMN slot_index INTEGER NOT NULL DEFAULT 1;"),
+            ("position_label", "ALTER TABLE test_runs ADD COLUMN position_label TEXT NOT NULL DEFAULT '';"),
+            ("load_channel", "ALTER TABLE test_runs ADD COLUMN load_channel TEXT NOT NULL DEFAULT '';"),
+            ("load_serial_number", "ALTER TABLE test_runs ADD COLUMN load_serial_number TEXT NOT NULL DEFAULT '';"),
+        ):
+            if name not in run_cols:
+                conn.execute(ddl)
         conn.execute(
             """CREATE TABLE IF NOT EXISTS test_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

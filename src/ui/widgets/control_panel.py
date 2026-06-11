@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLayout,
     QLineEdit,
     QProgressBar,
     QPushButton,
@@ -56,7 +55,7 @@ class ControlPanelWidget(QWidget):
         self.chk_save_log.setObjectName("chk_save_log")
         self.chk_save_log.setChecked(True)
         self.chk_save_log.setToolTip(
-            "When checked, the sequence PDF report is archived at end-of-run."
+            "When checked, the sequence PDF and XML reports are archived at end-of-run."
         )
         root.addWidget(self.chk_save_log)
 
@@ -99,10 +98,16 @@ class ControlPanelWidget(QWidget):
         status_form.setLabelAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
+
         self.edit_current_test = QLineEdit()
         self.edit_current_test.setReadOnly(True)
         self.edit_current_test.setPlaceholderText("—")
         status_form.addRow("Current", self.edit_current_test)
+
+        self.edit_current_unit = QLineEdit()
+        self.edit_current_unit.setReadOnly(True)
+        self.edit_current_unit.setPlaceholderText("—")
+        status_form.addRow("Unit", self.edit_current_unit)
 
         self.progress_test = QProgressBar()
         self.progress_test.setMaximumHeight(16)
@@ -124,6 +129,11 @@ class ControlPanelWidget(QWidget):
         counters.addWidget(self.label_pass)
         counters.addWidget(self.label_fail)
         status_layout.addLayout(counters)
+
+        self.label_batch_summary = QLabel("Batch: 0 PASS / 0 FAIL")
+        self.label_batch_summary.setObjectName("lbl_batch_summary")
+        self.label_batch_summary.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        status_layout.addWidget(self.label_batch_summary)
 
         loops_row = QHBoxLayout()
         loops_row.setSpacing(4)
@@ -153,11 +163,7 @@ class ControlPanelWidget(QWidget):
             self.btn_start.setText("Start")
 
     def take_user_box(self) -> QGroupBox:
-        """Detach the User QGroupBox so MainWindow can re-parent it into the left sidebar.
-
-        Safe to call exactly once. The QLineEdit children (edit_user_name,
-        edit_user_level) remain attributes of this widget for callers.
-        """
+        """Detach the User QGroupBox so MainWindow can re-parent it into the left sidebar."""
         self._root_layout.removeWidget(self.user_box)
         self.user_box.setParent(None)
         return self.user_box

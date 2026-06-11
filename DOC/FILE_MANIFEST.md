@@ -9,6 +9,15 @@ materially changed.
 > behaviour no longer matches the code are flagged **(CHANGED)**; non-functional
 > artifacts are flagged **(STALE/UNUSED)**.
 
+## 2026-06-11 batch update
+
+- `src/ui/views/batch_pre_test_dialog.py` adds batch-size and multi-serial entry with duplicate blocking.
+- `src/logic/test_engine.py` now runs one script across multiple fixed positions, including input-voltage and polarity prechecks per unit.
+- `src/logic/models.py` now includes `BatchUnit` / `BatchUnitReport`, and `TestRunRecord` carries batch, slot, and load metadata.
+- `src/logic/report_generator.py` now creates XML alongside PDF and includes position/load metadata in each per-unit report.
+- `src/ui/report_worker.py` archives every reportable unit in the batch.
+- `src/drivers/base_driver.py` / `src/drivers/mock_hardware.py` now support `activate_slot(...)` and precheck commands for batch demos.
+
 ## Entry point & top-level modules
 
 | File Path                | Module | Short Description                                                                                                  |

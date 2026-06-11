@@ -46,7 +46,7 @@ from logic.secure_logger import get_secure_logger
 from logic.test_engine import TestRunnerThread
 from paths import resource_path, user_data_path
 from ui.views.audit_viewer_dialog import AuditViewerDialog
-from ui.views.pre_test_dialog import PreTestDialog
+from ui.views.batch_pre_test_dialog import BatchPreTestDialog
 from ui.views.select_test_dialog import SelectTestDialog
 from ui.views.sequence_editor_dialog import SequenceEditorDialog
 from ui.views.test_result_dialog import TestResultDialog
@@ -100,6 +100,9 @@ class MainWindow(QMainWindow):
             self._secure = None
         self._last_run_meta: dict | None = None
         self._last_run_rows: list[dict] = []
+        self._last_run_jobs: list[tuple[dict, list[dict]]] = []
+        self._batch_pass_count = 0
+        self._batch_fail_count = 0
         self._report_worker: ReportWorker | None = None
         self._setup_ui()
         if SHOW_LIVE_MONITOR:
@@ -737,20 +740,32 @@ class MainWindow(QMainWindow):
         self.control_panel.edit_user_name.setText(str(self._user_info.get("name", "")))
         self.control_panel.edit_serial_number.clear()
         self.control_panel.edit_uut_type.clear()
+        self.control_panel.edit_current_unit.clear()
 
     def _finalize_run_reports(self) -> None:
         th = self.test_thread
         if th is None:
             return
-        meta, rows = th.report_snapshot()
         logical_name = f"{self._catalog_test_name} {getattr(self, '_catalog_version', '')}".strip()
-        meta["test_program_name"] = logical_name
-        self._last_run_meta = meta
-        self._last_run_rows = list(rows)
+        jobs: list[tuple[dict, list[dict]]] = []
+        for report in th.report_snapshots():
+            if not report.should_generate_report:
+                continue
+            meta = report.meta()
+            meta["test_program_name"] = logical_name
+            jobs.append((meta, report.rows()))
+        if jobs:
+            self._last_run_meta, self._last_run_rows = jobs[-1]
+        else:
+            self._last_run_meta, self._last_run_rows = None, []
+        self._last_run_jobs = list(jobs)
         if not self.control_panel.chk_save_log.isChecked():
             self.append_trace("Save as log disabled — skipping PDF archive.")
             return
-        self._report_worker = ReportWorker(meta, rows, self._current_role(), parent=self)
+        if not jobs:
+            self.append_trace("No reportable units in this batch.")
+            return
+        self._report_worker = ReportWorker(jobs, self._current_role(), parent=self)
         self._report_worker.archived.connect(
             lambda p: self.append_trace(f"Report archived: {Path(p).name}")
         )
@@ -902,7 +917,7 @@ class MainWindow(QMainWindow):
             self.control_panel.btn_start.setText("Pause")
             return
 
-        dlg = PreTestDialog(
+        dlg = BatchPreTestDialog(
             tester_name_default=str(self._user_info.get("name", "")),
             default_uut_type=self.control_panel.edit_uut_type.text(),
             parent=self,
@@ -911,7 +926,9 @@ class MainWindow(QMainWindow):
             return
 
         dialog_results = dlg.result_dict()
-        self.control_panel.edit_serial_number.setText(dialog_results["serial_number"])
+        batch_units = list(dialog_results["batch_units"])
+        first_serial = batch_units[0].serial_number if batch_units else ""
+        self.control_panel.edit_serial_number.setText(first_serial)
         self.control_panel.edit_user_name.setText(dialog_results["tester_name"])
 
         tests_to_run = self._selected_test_names()
@@ -928,12 +945,11 @@ class MainWindow(QMainWindow):
             return
 
         part_number = self.control_panel.edit_part_number.text().strip()
-        serial_number = self.control_panel.edit_serial_number.text().strip()
-        if not part_number or not serial_number:
+        if not part_number or not batch_units:
             QMessageBox.warning(
                 self,
                 "Missing unit info",
-                "Part Number and Serial Number are required before starting a test.",
+                "Part Number and at least one serial number are required before starting a test.",
             )
             return
 
@@ -942,6 +958,9 @@ class MainWindow(QMainWindow):
         self.control_panel.edit_uut_type.setReadOnly(True)
         self.control_panel.edit_user_name.setReadOnly(True)
         self._pre_test_locked = True
+        self.control_panel.edit_current_unit.setText(
+            f"1 / {len(batch_units)} — {first_serial}"
+        )
 
         self._clear_trace()
         self._start_test_run(dialog_results)
@@ -953,8 +972,12 @@ class MainWindow(QMainWindow):
         self.control_panel.progress_total.setValue(0)
         self.control_panel.progress_test.setValue(0)
         self.control_panel.edit_current_test.clear()
+        self.control_panel.edit_current_unit.clear()
         self.control_panel.label_pass.setText("PASS: 0")
         self.control_panel.label_fail.setText("FAIL: 0")
+        self.control_panel.label_batch_summary.setText("Batch: 0 PASS / 0 FAIL")
+        self._batch_pass_count = 0
+        self._batch_fail_count = 0
 
         self.control_panel.btn_stop.setEnabled(True)
         self.control_panel.btn_start.setText("Pause")
@@ -965,10 +988,11 @@ class MainWindow(QMainWindow):
             else 1
         )
         stop_on_fail = self.control_panel.chk_stop_on_fail.isChecked()
+        batch_units = list(pre_meta["batch_units"])
 
         operator = self.control_panel.edit_user_name.text().strip()
         part_number = self.control_panel.edit_part_number.text().strip()
-        serial_number = self.control_panel.edit_serial_number.text().strip()
+        serial_number = batch_units[0].serial_number if batch_units else ""
 
         started = datetime.now()
         employee_id = str(self._user_info.get("employee_id", ""))
@@ -987,6 +1011,7 @@ class MainWindow(QMainWindow):
             uut_type=pre_meta["uut_type"].strip(),
             part_number=part_number,
             serial_number=serial_number,
+            batch_units=batch_units,
             script_manager=self._script_manager,
             start_time=started,
             logical_script_name=logical_script_name,
@@ -997,6 +1022,9 @@ class MainWindow(QMainWindow):
         self.test_thread.progress_total.connect(self.control_panel.progress_total.setValue)
         self.test_thread.progress_test.connect(self.control_panel.progress_test.setValue)
         self.test_thread.current_test.connect(self.control_panel.edit_current_test.setText)
+        self.test_thread.current_unit_changed.connect(self._on_current_unit_changed)
+        self.test_thread.unit_finished.connect(self._on_unit_finished)
+        self.test_thread.unit_alert.connect(self._on_unit_alert)
         self.test_thread.prompt_request.connect(self._on_prompt_request)
         self.test_thread.script_log.connect(self._on_script_log)
         self.test_thread.finished.connect(self.on_tests_finished)
@@ -1009,7 +1037,7 @@ class MainWindow(QMainWindow):
                 employee_id=employee_id,
                 details=(
                     f"script={logical_script_name} "
-                    f"part={part_number!r} sn={serial_number!r} "
+                    f"part={part_number!r} units={len(batch_units)} first_sn={serial_number!r} "
                     f"steps={len(tests_to_run)}"
                 ),
             )
@@ -1017,6 +1045,44 @@ class MainWindow(QMainWindow):
             pass
 
         self.test_thread.start()
+
+    def _on_current_unit_changed(
+        self,
+        serial_number: str,
+        index: int,
+        total: int,
+        position_label: str,
+    ) -> None:
+        self.control_panel.edit_current_unit.setText(
+            f"{index}/{total} — {serial_number} — {position_label}"
+        )
+        self.control_panel.edit_serial_number.setText(serial_number)
+        col_count = self.results_table.columnCount()
+        row = self.results_table.rowCount()
+        self.results_table.insertRow(row)
+        self.results_table.setSpan(row, 0, 1, col_count)
+        item = QTableWidgetItem(f"=== Unit {index}/{total}: {serial_number} @ {position_label} ===")
+        font = QFont()
+        font.setBold(True)
+        item.setFont(font)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item.setBackground(QBrush(QColor("#374151")))
+        item.setForeground(QBrush(QColor("white")))
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        self.results_table.setItem(row, 0, item)
+
+    def _on_unit_finished(self, payload: dict) -> None:
+        passed = bool(payload.get("passed"))
+        if passed:
+            self._batch_pass_count += 1
+        else:
+            self._batch_fail_count += 1
+        self.control_panel.label_batch_summary.setText(
+            f"Batch: {self._batch_pass_count} PASS / {self._batch_fail_count} FAIL"
+        )
+
+    def _on_unit_alert(self, message: str) -> None:
+        QMessageBox.warning(self, "Unit Alert", message)
 
     def _on_prompt_request(self, msg: str) -> None:
         """Show a modal prompt; resume the runner once the operator clicks OK."""
@@ -1176,7 +1242,13 @@ class MainWindow(QMainWindow):
             min_str = _NA
             max_str = _NA
 
-        self.results_table.setItem(row, 0, QTableWidgetItem(test_name))
+        serial = str(result.get("serial_number", "")).strip()
+        position_label = str(result.get("position_label", "")).strip()
+        display_name = test_name
+        if serial:
+            display_name = f"[{serial} | {position_label}] {test_name}".strip()
+
+        self.results_table.setItem(row, 0, QTableWidgetItem(display_name))
         self.results_table.setItem(row, 1, QTableWidgetItem(val_str))
         self.results_table.setItem(row, 2, QTableWidgetItem(min_str))
         self.results_table.setItem(row, 3, QTableWidgetItem(max_str))
@@ -1209,17 +1281,19 @@ class MainWindow(QMainWindow):
             self._finalize_run_reports()
         finally:
             try:
-                meta, _rows = th.report_snapshot()
-                overall_passed = (
-                    str(meta.get("overall_result", "")).strip().upper() == "PASS"
+                reports = th.report_snapshots()
+                overall_passed = bool(reports) and all(
+                    report.overall_result.strip().upper() == "PASS" for report in reports
                 )
+                meta, _rows = th.report_snapshot()
                 DatabaseManager().log_audit_action(
                     "Test run completed",
                     username=str(self._user_info.get("username", "")),
                     employee_id=str(self._user_info.get("employee_id", "")),
                     details=(
-                        f"overall={meta.get('overall_result', '?')} "
-                        f"script={meta.get('test_program_name', '')}"
+                        f"overall={'PASS' if overall_passed else 'FAIL'} "
+                        f"script={meta.get('test_program_name', '')} "
+                        f"units={len(reports)}"
                     ),
                 )
             except Exception:

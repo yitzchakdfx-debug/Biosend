@@ -11,8 +11,13 @@
 **DFX_ate** is a Windows desktop ATE (Automated Test Equipment) front-end built
 with PySide6. It runs keyword-driven `.tst` test scripts against hardware
 (currently `MockHardware`; real drivers slot in via `BaseDriver`), records results
-in SQLite, generates PDF/CSV reports, and provides role-gated access for factory
+in SQLite, generates PDF/CSV/XML reports, and provides role-gated access for factory
 floor operators.
+
+> **Batch mode update (2026-06-11):** One selected test program can now run
+> across multiple scanned serial numbers in sequence. Each unit is tied to a
+> fixed position/load channel, receives input-voltage and polarity prechecks,
+> and produces its own PDF/XML report.
 
 - Entry point: `src/main.py`
 - All source lives under `src/`

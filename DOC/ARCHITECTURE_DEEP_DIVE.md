@@ -11,6 +11,11 @@ contradicts the source, the source is wrong - fix the source, not the doc.
 > reporting**, a **live monitor**, and a richer RBAC/UI surface. Where the code
 > and prose disagreed, the prose was corrected.
 
+> **Batch sync (2026-06-11):** The runner now supports sequential batch mode.
+> One selected script can execute across multiple scanned serial numbers bound
+> to fixed slots/load channels. Each unit gets an input-voltage precheck,
+> polarity gate, and independent PDF/XML report snapshot.
+
 ---
 
 ## 0. Subsystem map

@@ -59,6 +59,72 @@ class TestResultPayload(TypedDict):
     is_measurement: bool
 
 
+@dataclass(frozen=True, slots=True)
+class BatchUnit:
+    """One UUT in a batch run, bound to a fixed physical position/load."""
+
+    serial_number: str
+    slot_index: int
+    position_label: str
+    load_channel: str
+    load_serial_number: str
+
+
+@dataclass
+class BatchUnitReport:
+    """Finished per-unit run snapshot used for DB persistence and reporting."""
+
+    unit: BatchUnit
+    record: "TestRunRecord"
+    tester_name: str
+    employee_id: str
+    uut_type: str
+    test_program_name: str
+    overall_result: str
+    alert_message: str = ""
+    should_generate_report: bool = True
+
+    def meta(self) -> dict[str, Any]:
+        end = self.record.end_time or datetime.now()
+        return {
+            "overall_result": self.overall_result,
+            "tester_name": self.tester_name,
+            "employee_id": self.employee_id,
+            "test_program_name": self.test_program_name,
+            "uut_type": self.uut_type,
+            "part_number": self.record.part_number,
+            "serial_number": self.record.serial_number,
+            "start_time": self.record.start_time.isoformat(timespec="seconds"),
+            "end_time": end.isoformat(timespec="seconds"),
+            "position_label": self.unit.position_label,
+            "slot_index": self.unit.slot_index,
+            "load_channel": self.unit.load_channel,
+            "load_serial_number": self.unit.load_serial_number,
+            "alert_message": self.alert_message,
+        }
+
+    def rows(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for item in self.record.results:
+            rows.append(
+                {
+                    "test_name": item.get("test_name", ""),
+                    "value": item.get("value"),
+                    "min": item.get("min"),
+                    "max": item.get("max"),
+                    "unit": item.get("unit", ""),
+                    "passed": bool(item.get("passed")),
+                    "is_measurement": item.get("is_measurement", True),
+                    "loop": int(item.get("loop", 1)),
+                    "position_label": self.unit.position_label,
+                    "slot_index": self.unit.slot_index,
+                    "load_channel": self.unit.load_channel,
+                    "load_serial_number": self.unit.load_serial_number,
+                }
+            )
+        return rows
+
+
 _VALID_ROLES: frozenset[str] = frozenset({"Operator", "Technician", "Admin"})
 
 
@@ -84,6 +150,12 @@ class TestRunRecord:
     part_number: str
     serial_number: str
     overall_passed: bool = True
+    batch_label: str = ""
+    batch_index: int = 1
+    slot_index: int = 1
+    position_label: str = ""
+    load_channel: str = ""
+    load_serial_number: str = ""
     start_time: datetime = field(default_factory=datetime.now)
     end_time: datetime | None = None
     results: list[dict[str, Any]] = field(default_factory=list)

@@ -1,4 +1,4 @@
-"""PDF and CSV test reports with role-based detail and archiving."""
+"""PDF, CSV, and XML test reports with role-based detail and archiving."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from xml.etree.ElementTree import Element, ElementTree, SubElement
 
 from PyPDF2 import PdfReader, PdfWriter
 from reportlab.lib import colors
@@ -79,6 +80,19 @@ class ReportGenerator:
         write_pdf_report(pdf_path, run_meta, results, role_key)
         return pdf_path
 
+    def generate_xml_auto_archive(
+        self,
+        run_meta: dict[str, Any],
+        results: list[dict[str, Any]],
+        role: str,
+    ) -> Path:
+        role_key = role.strip().title()
+        archive_dir, stem = self._resolved_archive_paths(run_meta)
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        xml_path = archive_dir / f"{stem}_{role_key.replace(' ', '_')}.xml"
+        write_xml_report(xml_path, run_meta, results, role_key)
+        return xml_path
+
     def generate_csv_file(
         self,
         dest: Path | str,
@@ -101,6 +115,18 @@ class ReportGenerator:
         path = Path(dest)
         path.parent.mkdir(parents=True, exist_ok=True)
         write_pdf_report(path, run_meta, results, role.strip().title())
+        return path
+
+    def generate_xml_file(
+        self,
+        dest: Path | str,
+        run_meta: dict[str, Any],
+        results: list[dict[str, Any]],
+        role: str,
+    ) -> Path:
+        path = Path(dest)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_xml_report(path, run_meta, results, role.strip().title())
         return path
 
     # Backward-compat name used elsewhere
@@ -133,6 +159,10 @@ def _header_rows(run_meta: dict[str, Any], role: str) -> list[tuple[str, str]]:
         ("UUT Type", str(run_meta.get("uut_type", ""))),
         ("UUT Name (Part)", str(run_meta.get("part_number", ""))),
         ("UUT SN", str(run_meta.get("serial_number", ""))),
+        ("Position", str(run_meta.get("position_label", ""))),
+        ("Slot Index", str(run_meta.get("slot_index", ""))),
+        ("Load Channel", str(run_meta.get("load_channel", ""))),
+        ("Load Serial Number", str(run_meta.get("load_serial_number", ""))),
         ("Start Time", str(run_meta.get("start_time", ""))),
         ("End Time", str(run_meta.get("end_time", ""))),
         ("Tester SN", TESTER_SERIAL_NUMBER),
@@ -407,3 +437,49 @@ def write_pdf_report(
         path.write_bytes(out_buf.getvalue())
     else:
         path.write_bytes(stamped_pdf)
+
+
+def write_xml_report(
+    path: Path,
+    run_meta: dict[str, Any],
+    results: list[dict[str, Any]],
+    role: str,
+) -> None:
+    root = Element("test_report")
+    root.set("role", role)
+
+    meta_node = SubElement(root, "metadata")
+    for key, value in _header_rows(run_meta, role):
+        field = SubElement(meta_node, "field")
+        field.set("name", key)
+        field.text = str(value)
+
+    alert_message = str(run_meta.get("alert_message", "")).strip()
+    if alert_message:
+        alert = SubElement(root, "alert")
+        alert.text = alert_message
+
+    results_node = SubElement(root, "results")
+    for row in results:
+        test = SubElement(results_node, "test")
+        test.set("name", str(row.get("test_name", "")))
+        test.set("status", "PASS" if row.get("passed") else "FAIL")
+        test.set("loop", str(row.get("loop", 1)))
+        for key in (
+            "value",
+            "min",
+            "max",
+            "unit",
+            "position_label",
+            "slot_index",
+            "load_channel",
+            "load_serial_number",
+        ):
+            child = SubElement(test, key)
+            if key in {"value", "min", "max"}:
+                child.text = _fmt_num(row.get(key))
+            else:
+                child.text = str(row.get(key, ""))
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
