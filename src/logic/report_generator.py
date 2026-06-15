@@ -20,7 +20,7 @@ from reportlab.pdfgen import canvas as _pdfcanvas
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from reportlab.platypus.tables import LongTable
 
-from config import ADMIN_REPORT_PASSWORD, TESTER_SERIAL_NUMBER
+from config import TESTER_SERIAL_NUMBER
 from paths import resource_path, user_data_path
 from version import __version__
 
@@ -447,20 +447,7 @@ def write_pdf_report(
 
     stamped_pdf = _stamp_logo_watermark(raw_pdf, letter)
 
-    if is_admin:
-        reader = PdfReader(io.BytesIO(stamped_pdf))
-        writer = PdfWriter()
-        for pg in reader.pages:
-            writer.add_page(pg)
-        writer.encrypt(
-            user_password=ADMIN_REPORT_PASSWORD,
-            owner_password=ADMIN_REPORT_PASSWORD,
-        )
-        out_buf = io.BytesIO()
-        writer.write(out_buf)
-        path.write_bytes(out_buf.getvalue())
-    else:
-        path.write_bytes(stamped_pdf)
+    path.write_bytes(stamped_pdf)
 
 
 def write_xml_report(
