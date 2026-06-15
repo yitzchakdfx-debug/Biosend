@@ -106,8 +106,9 @@ The UI is themed entirely through Qt Style Sheets. Required fluency:
   and `writer.encrypt()` for Admin-only password-protected reports.
 - **`csv`** (stdlib) for the role-gated CSV export.
 
-## 8. Serial enumeration (optional)
+## 8. VISA / Serial device access (optional)
 
+- **PyVISA** — USB/LAN/GPIB control path for the real Prodigit hardware.
 - **`pyserial`** — `serial.tools.list_ports.comports()` for COM discovery,
   imported defensively so the app still runs when pyserial is absent.
 

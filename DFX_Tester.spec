@@ -36,12 +36,14 @@ datas = [
     (str(SRC / "data" / "limits.json"), "data"),
     (str(SRC / "data" / "sequence.tst"), "data"),
     (str(SRC / "data" / "demo_system.tst"), "data"),
+    (str(SRC / "data" / "Automatic Power Supply Test.tst"), "data"),
+    (str(SRC / "data" / "Automatic Power Supply Test - Demo.tst"), "data"),
 ]
 
 # Force-include cryptography backends — they are lazy imports that
 # PyInstaller's static analysis sometimes misses, and the secure log
 # Fernet path will blow up at runtime without them.
-hiddenimports = collect_submodules("cryptography") + ["dotenv"]
+hiddenimports = collect_submodules("cryptography") + collect_submodules("pyvisa") + ["dotenv"]
 
 excludes = [
     # Heavy PySide6 modules this app does not use. Excluding the Python

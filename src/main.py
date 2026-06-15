@@ -8,7 +8,6 @@ from pathlib import Path
 import ctypes
 
 
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 _SRC = Path(__file__).resolve().parent
@@ -18,7 +17,7 @@ if str(_SRC) not in sys.path:
 from ui.views.login_dialog import LoginDialog
 from ui.views.main_window import MainWindow
 from logic.file_lock import AlreadyRunningError, SingleInstanceLock
-from paths import ensure_user_data_seeded, resource_path, user_data_path, user_tmp_path
+from paths import ensure_user_data_seeded, user_data_path, user_tmp_path
 
 
 def _sweep_tmp() -> None:
@@ -41,12 +40,6 @@ def main() -> int:
     _sweep_tmp()
 
     app = QApplication(sys.argv)
-    icon_path = resource_path("ui", "assets", "icons", "BirdAppIcon.png")
-    if icon_path.is_file():
-        app.setWindowIcon(QIcon(str(icon_path)))
-    else:
-        print(f"Warning: Icon not found at {icon_path}")
-
     lock_path = user_data_path("app.lock")
     lock = SingleInstanceLock(lock_path)
     try:

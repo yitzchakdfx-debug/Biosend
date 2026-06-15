@@ -35,6 +35,7 @@ floor operators.
 | PDF | ReportLab + PyPDF2 |
 | Encryption | `cryptography` (Fernet / PBKDF2) |
 | COM ports | `pyserial` (optional; graceful fallback) |
+| VISA/USB | `pyvisa` (optional; real Prodigit backend) |
 | Config | `python-dotenv` |
 | Build | PyInstaller onedir (`DFX_Tester.spec`) |
 | Python | 3.11+ |

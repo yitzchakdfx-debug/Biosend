@@ -17,7 +17,7 @@ from config import (
     LOAD_SERIALS,
 )
 from drivers.base_driver import BaseDriver, HardwareError
-from drivers.mock_hardware import MockHardware
+from drivers.factory import create_driver
 from logic.database_manager import DatabaseManager
 from logic.models import BatchUnit, BatchUnitReport, TestResultPayload, TestRunRecord, TestStep
 from logic.script_manager import ScriptManager, ScriptParseError
@@ -45,6 +45,9 @@ class TestRunnerThread(QThread):
     current_unit_changed = Signal(str, int, int, str)
     unit_finished = Signal(dict)
     unit_alert = Signal(str)
+    timed_step_started = Signal(str, int)
+    timed_step_progress = Signal(int, int)
+    timed_step_finished = Signal()
 
     def __init__(
         self,
@@ -72,9 +75,10 @@ class TestRunnerThread(QThread):
         self._loop_count = max(1, loop_count)
         self._stop_on_fail = stop_on_fail
         self._script_manager = script_manager or ScriptManager()
-        self._hw: BaseDriver = driver or MockHardware()
+        self._hw: BaseDriver = driver or create_driver()
         self._stop_requested = False
         self._prompt_event: Event = Event()
+        self._prompt_result: float = 0.0
         self._pause_event: Event = Event()
         self._pause_event.set()
         self._db = DatabaseManager()
@@ -94,6 +98,7 @@ class TestRunnerThread(QThread):
         self._load_res_300w = _as_float(LOAD_RESISTANCE_300W_OHM, 2.2)
         self._reports: list[BatchUnitReport] = []
         self._current_unit: BatchUnit | None = None
+        self._current_test_name = ""
         if batch_units:
             self._batch_units = list(batch_units)
         else:
@@ -289,6 +294,7 @@ class TestRunnerThread(QThread):
                     abort_loops = True
                     break
 
+                self._current_test_name = step.name
                 self.current_test.emit(step.name)
                 self.progress_test.emit(0)
                 self._configure_load_for_step(step)
@@ -319,8 +325,9 @@ class TestRunnerThread(QThread):
                     "passed": passed,
                     "is_measurement": step.has_limits and value is not None,
                 }
-                self._emit_result(unit, step.name, payload)
-                record.results.append({"test_name": step.name, "loop": loop_number, **dict(payload)})
+                if not step.hidden:
+                    self._emit_result(unit, step.name, payload)
+                    record.results.append({"test_name": step.name, "loop": loop_number, "group": step.group, **dict(payload)})
 
                 self.progress_test.emit(100)
                 completed += 1
@@ -341,6 +348,23 @@ class TestRunnerThread(QThread):
 
             if abort_loops:
                 break
+
+        if abort_loops:
+            executed_names = {r["test_name"] for r in record.results}
+            for step in steps:
+                if step.name not in executed_names and not step.hidden:
+                    na_payload: TestResultPayload = {
+                        "value": 0.0,
+                        "min": 0.0,
+                        "max": 0.0,
+                        "unit": step.unit,
+                        "passed": False,
+                        "is_measurement": False,
+                    }
+                    self._emit_result(unit, step.name, na_payload)
+                    record.results.append(
+                        {"test_name": step.name, "loop": loop_number, "skipped": True, **dict(na_payload)}
+                    )
 
         record.overall_passed = overall_passed and not self._stop_requested
         record.end_time = datetime.now()
@@ -498,7 +522,9 @@ class TestRunnerThread(QThread):
         if name == "delay":
             if not args:
                 raise ValueError("'Delay' requires a millisecond argument")
-            self.msleep(int(float(args[0])))
+            min_v = float(args[1]) if len(args) >= 3 else None
+            max_v = float(args[2]) if len(args) >= 3 else None
+            self._run_delay(int(float(args[0])), min_v, max_v)
             return None
 
         if name == "log":
@@ -507,12 +533,42 @@ class TestRunnerThread(QThread):
 
         if name == "prompt":
             self._prompt_event.clear()
+            self._prompt_result = 0.0
             self.prompt_request.emit(" ".join(args))
             self._prompt_event.wait()
-            return None
+            return self._prompt_result
 
         value = self._hw.execute_command(name, args)
         return value if name in self._hw.measurement_commands else None
+
+    def _run_delay(self, delay_ms: int, min_v: float | None = None, max_v: float | None = None) -> None:
+        total_ms = max(0, int(delay_ms))
+        if total_ms <= 0:
+            return
+        self.timed_step_started.emit(self._current_test_name, total_ms)
+        chunk_ms = 200
+        elapsed = 0
+        monitor_interval_ms = 5_000
+        next_monitor_ms = monitor_interval_ms
+        while elapsed < total_ms and not self._stop_requested:
+            remaining = total_ms - elapsed
+            slice_ms = min(chunk_ms, remaining)
+            self.msleep(slice_ms)
+            elapsed += slice_ms
+            self.timed_step_progress.emit(elapsed, total_ms)
+            if min_v is not None and max_v is not None and elapsed >= next_monitor_ms:
+                next_monitor_ms += monitor_interval_ms
+                try:
+                    v = self._hw.execute_command("readchannel", ["2"])
+                    if not (min_v <= v <= max_v):
+                        self.timed_step_finished.emit()
+                        self._emit_log("error", f"Monitoring: voltage {v:.3f}V outside [{min_v}-{max_v}V] at {elapsed // 1000}s")
+                        raise RuntimeError(f"Voltage {v:.3f}V out of range [{min_v}-{max_v}V] at {elapsed // 1000}s")
+                except RuntimeError:
+                    raise
+                except Exception as exc:
+                    self._emit_log("info", f"Monitoring read skipped: {exc}")
+        self.timed_step_finished.emit()
 
     def _save_record(self, record: TestRunRecord) -> None:
         try:
@@ -520,7 +576,8 @@ class TestRunnerThread(QThread):
         except Exception as exc:
             self._emit_log("error", f"ERROR: failed to save run to database: {exc!s}")
 
-    def resume(self) -> None:
+    def resume(self, result: float = 1.0) -> None:
+        self._prompt_result = result
         self._prompt_event.set()
 
     def pause(self) -> None:

@@ -17,6 +17,9 @@ materially changed.
 - `src/logic/report_generator.py` now creates XML alongside PDF and includes position/load metadata in each per-unit report.
 - `src/ui/report_worker.py` archives every reportable unit in the batch.
 - `src/drivers/base_driver.py` / `src/drivers/mock_hardware.py` now support `activate_slot(...)` and precheck commands for batch demos.
+- `src/drivers/factory.py` picks the hardware backend from `HARDWARE_BACKEND`.
+- `src/drivers/prodigit_visa.py` is the real VISA/USB/LAN/GPIB backend for Prodigit instruments.
+- `requirements.txt` now includes `pyvisa` for the real hardware path.
 
 ## Entry point & top-level modules
 

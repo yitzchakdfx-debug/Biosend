@@ -30,7 +30,7 @@ class ScriptManager:
 
     SCRIPT_SUFFIX: str = ".tst"
     _KEYWORDS: frozenset[str] = frozenset(
-        {"critical", "limits", "unit", "target", "retry"}
+        {"critical", "limits", "unit", "target", "retry", "hidden", "group"}
     )
     _HEADER_PARTNUM_RE = re.compile(r"^\s*(?:#\s*)?partnum\s*:\s*(.+?)\s*$", re.IGNORECASE)
 
@@ -227,6 +227,18 @@ class ScriptManager:
             step.unit = " ".join(tokens[1:])
             return
 
+        if head == "hidden":
+            if len(tokens) != 1:
+                raise ScriptParseError(line_no, raw, "'Hidden' takes no arguments")
+            step.hidden = True
+            return
+
+        if head == "group":
+            if len(tokens) < 2:
+                raise ScriptParseError(line_no, raw, "'Group' requires a name")
+            step.group = " ".join(tokens[1:])
+            return
+
     def serialize_ordered_steps(
         self, steps: list[TestStep], *, metadata: dict[str, str] | None = None
     ) -> str:
@@ -241,6 +253,10 @@ class ScriptManager:
             lines.append(f":{step.name}")
             if step.is_critical:
                 lines.append("Critical")
+            if step.hidden:
+                lines.append("Hidden")
+            if step.group:
+                lines.append(f"Group {step.group}")
             if step.retry_count > 0:
                 lines.append(f"Retry {step.retry_count}")
             if step.has_limits:

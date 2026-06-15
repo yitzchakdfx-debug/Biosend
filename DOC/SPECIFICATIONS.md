@@ -17,6 +17,7 @@ unsupported until this document is updated.
 | PDF reporting  | **ReportLab >= 4.0** + **PyPDF2 >= 3.0**                   | ReportLab builds the document; PyPDF2 stamps the logo watermark and encrypts Admin reports. |
 | Encryption     | **cryptography >= 41.0** (`Fernet`, PBKDF2HMAC)            | Encrypted daily system logs (`data/logs/sys_*.dat`).               |
 | Serial (opt.)  | **pyserial >= 3.5**                                        | COM-port enumeration in the Connection Settings form. Imported defensively (`try/except`); falls back to a static `COM1..COM8` list if missing. |
+| VISA/USB (opt.)| **pyvisa >= 1.14.1**                                       | Real `Prodigit` USB/LAN/GPIB integration. Imported lazily; the app still runs in mock mode if `pyvisa` is missing. |
 | Config         | **`python-dotenv` >= 1.0.0** + stdlib env/JSON             | `.env` next to the EXE (or repo root in dev) is the single source of truth for secrets + feature flags. Falls back to safe defaults if absent (see `DOC/.env.example`). `data/limits.json` is **legacy/unused**. |
 | Test scripts   | **Plain text** (`.tst`, UTF-8)                             | Structured keyword grammar — see `KEYWORDS_DICTIONARY.md`.          |
 | Filesystem API | **`pathlib.Path`** for all I/O                            | String paths only at the edges (`QFileDialog`, `tempfile.mkstemp`). |
@@ -40,6 +41,7 @@ reportlab>=4.0.0
 PyPDF2>=3.0.0
 cryptography>=41.0.0
 pyserial>=3.5
+pyvisa>=1.14.1
 python-dotenv>=1.0.0
 ```
 

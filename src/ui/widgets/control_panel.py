@@ -113,6 +113,17 @@ class ControlPanelWidget(QWidget):
         self.progress_test.setMaximumHeight(16)
         status_form.addRow("Test", self.progress_test)
 
+        self.progress_time = QProgressBar()
+        self.progress_time.setMaximumHeight(16)
+        status_form.addRow("Time", self.progress_time)
+
+        self.edit_time_left = QLineEdit()
+        self.edit_time_left.setReadOnly(True)
+        self.edit_time_left.setPlaceholderText("—")
+        status_form.addRow("Left", self.edit_time_left)
+        self.progress_time.setVisible(False)
+        self.edit_time_left.setVisible(False)
+
         self.progress_total = QProgressBar()
         self.progress_total.setMaximumHeight(16)
         status_form.addRow("Total", self.progress_total)

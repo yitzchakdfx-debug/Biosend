@@ -34,6 +34,8 @@ class TestStep:
     unit: str = ""
     is_critical: bool = False
     retry_count: int = 0  # extra attempts beyond the first
+    hidden: bool = False
+    group: str = ""
 
     @property
     def has_limits(self) -> bool:

@@ -24,7 +24,7 @@ from config import ADMIN_REPORT_PASSWORD, TESTER_SERIAL_NUMBER
 from paths import resource_path, user_data_path
 from version import __version__
 
-_LOGO_PATH = resource_path("ui", "assets", "icons", "BirdLogo.png")
+_LOGO_PATH = None
 
 def sanitize_path_segment(value: str) -> str:
     """Flatten whitespace and strip characters that break filesystem paths."""
@@ -221,7 +221,7 @@ def _build_logo_watermark_bytes(page_size: tuple[float, float]) -> bytes | None:
     Each call builds its own buffer/canvas — no shared state, safe for
     concurrent use with ``page.merge_page()``.
     """
-    if not _LOGO_PATH.is_file():
+    if _LOGO_PATH is None:
         return None
     try:
         img_reader = ImageReader(str(_LOGO_PATH))
@@ -347,8 +347,10 @@ def write_pdf_report(
 
     data: list[list[Any]] = [headers]
     loop_header_rows: list[int] = []
+    group_header_rows: list[int] = []
     fail_rows: list[int] = []
     current_loop: int | None = None
+    current_group: str = ""
 
     for row in results:
         loop_num = int(row.get("loop", 1))
@@ -359,8 +361,18 @@ def write_pdf_report(
             )
             current_loop = loop_num
 
+        row_group = str(row.get("group", ""))
+        if row_group and row_group != current_group:
+            current_group = row_group
+            group_header_rows.append(len(data))
+            data.append([row_group] + [""] * (n_cols - 1))
+        elif not row_group:
+            current_group = ""
+
         ok = bool(row.get("passed"))
-        if not ok:
+        skipped = bool(row.get("skipped"))
+        status = "N/A" if skipped else ("PASS" if ok else "FAIL")
+        if not ok and not skipped:
             fail_rows.append(len(data))
 
         if is_admin:
@@ -371,14 +383,14 @@ def write_pdf_report(
                     _fmt_num(row.get("max")),
                     _fmt_num(row.get("value")),
                     row.get("unit", ""),
-                    "PASS" if ok else "FAIL",
+                    status,
                 ]
             )
         else:
             data.append(
                 [
                     Paragraph(row.get("test_name", ""), styles["Normal"]),
-                    "PASS" if ok else "FAIL",
+                    status,
                 ]
             )
 
@@ -404,6 +416,18 @@ def write_pdf_report(
                 ("ALIGN", (0, ridx), (-1, ridx), "CENTER"),
                 ("TOPPADDING", (0, ridx), (-1, ridx), 6),
                 ("BOTTOMPADDING", (0, ridx), (-1, ridx), 6),
+            ]
+        )
+    for ridx in group_header_rows:
+        style_cmds.extend(
+            [
+                ("SPAN", (0, ridx), (-1, ridx)),
+                ("BACKGROUND", (0, ridx), (-1, ridx), colors.HexColor("#e8f0fe")),
+                ("TEXTCOLOR", (0, ridx), (-1, ridx), colors.HexColor("#1a3a6b")),
+                ("FONTNAME", (0, ridx), (-1, ridx), "Helvetica-Bold"),
+                ("ALIGN", (0, ridx), (-1, ridx), "LEFT"),
+                ("TOPPADDING", (0, ridx), (-1, ridx), 4),
+                ("BOTTOMPADDING", (0, ridx), (-1, ridx), 4),
             ]
         )
     for ridx in fail_rows:
@@ -463,7 +487,12 @@ def write_xml_report(
     for row in results:
         test = SubElement(results_node, "test")
         test.set("name", str(row.get("test_name", "")))
-        test.set("status", "PASS" if row.get("passed") else "FAIL")
+        if row.get("skipped"):
+            test.set("status", "N/A")
+        elif row.get("passed"):
+            test.set("status", "PASS")
+        else:
+            test.set("status", "FAIL")
         test.set("loop", str(row.get("loop", 1)))
         for key in (
             "value",

@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QUrl, Signal
-from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QIcon, QPixmap
+from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -65,6 +65,16 @@ _NA = "-"
 def _format_measurement(value: float) -> str:
     """Human-readable numeric string without excessive trailing zeros."""
     return f"{value:g}"
+
+
+def _format_remaining_time(remaining_ms: int) -> str:
+    remaining_ms = max(0, int(remaining_ms))
+    seconds = remaining_ms // 1000
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:d}:{seconds:02d}"
 
 
 class MainWindow(QMainWindow):
@@ -445,27 +455,6 @@ class MainWindow(QMainWindow):
         ribbon.addWidget(self.label_active_script)
 
         ribbon.addStretch()
-
-        self.lbl_brand_icon = QLabel()
-        self.lbl_brand_icon.setObjectName("brand_icon")
-        self.lbl_brand_icon.setFixedSize(220, 64)
-        self.lbl_brand_icon.setScaledContents(False)
-        self.lbl_brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_brand_icon.setSizePolicy(
-            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
-        )
-        bird_path = self._ICONS_DIR / "BirdLogo.png"
-        if bird_path.is_file():
-            pix = QPixmap(str(bird_path)).scaled(
-                self.lbl_brand_icon.width(),
-                self.lbl_brand_icon.height(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            self.lbl_brand_icon.setPixmap(pix)
-        self.lbl_brand_icon.setToolTip("DFX Tester")
-        ribbon.addWidget(self.lbl_brand_icon, 0, Qt.AlignmentFlag.AlignVCenter)
-        ribbon.addSpacing(12)
 
         self.btn_logout = self._make_ribbon_button("btn_logout", "Log Out")
         self.btn_logout.clicked.connect(self.logout)
@@ -971,6 +960,10 @@ class MainWindow(QMainWindow):
         self.results_table.setRowCount(0)
         self.control_panel.progress_total.setValue(0)
         self.control_panel.progress_test.setValue(0)
+        self.control_panel.progress_time.setValue(0)
+        self.control_panel.progress_time.hide()
+        self.control_panel.edit_time_left.setText("—")
+        self.control_panel.edit_time_left.hide()
         self.control_panel.edit_current_test.clear()
         self.control_panel.edit_current_unit.clear()
         self.control_panel.label_pass.setText("PASS: 0")
@@ -1022,6 +1015,9 @@ class MainWindow(QMainWindow):
         self.test_thread.progress_total.connect(self.control_panel.progress_total.setValue)
         self.test_thread.progress_test.connect(self.control_panel.progress_test.setValue)
         self.test_thread.current_test.connect(self.control_panel.edit_current_test.setText)
+        self.test_thread.timed_step_started.connect(self._on_timed_step_started)
+        self.test_thread.timed_step_progress.connect(self._on_timed_step_progress)
+        self.test_thread.timed_step_finished.connect(self._on_timed_step_finished)
         self.test_thread.current_unit_changed.connect(self._on_current_unit_changed)
         self.test_thread.unit_finished.connect(self._on_unit_finished)
         self.test_thread.unit_alert.connect(self._on_unit_alert)
@@ -1084,11 +1080,41 @@ class MainWindow(QMainWindow):
     def _on_unit_alert(self, message: str) -> None:
         QMessageBox.warning(self, "Unit Alert", message)
 
+    def _on_timed_step_started(self, step_name: str, total_ms: int) -> None:
+        del step_name
+        self.control_panel.progress_time.setRange(0, max(1, int(total_ms)))
+        self.control_panel.progress_time.setValue(0)
+        self.control_panel.progress_time.show()
+        self.control_panel.edit_time_left.setText(_format_remaining_time(total_ms))
+        self.control_panel.edit_time_left.show()
+
+    def _on_timed_step_progress(self, elapsed_ms: int, total_ms: int) -> None:
+        total_ms = max(1, int(total_ms))
+        elapsed_ms = max(0, min(int(elapsed_ms), total_ms))
+        self.control_panel.progress_time.setRange(0, total_ms)
+        self.control_panel.progress_time.setValue(elapsed_ms)
+        self.control_panel.edit_time_left.setText(
+            _format_remaining_time(total_ms - elapsed_ms)
+        )
+
+    def _on_timed_step_finished(self) -> None:
+        self.control_panel.progress_time.setValue(0)
+        self.control_panel.progress_time.hide()
+        self.control_panel.edit_time_left.setText("—")
+        self.control_panel.edit_time_left.hide()
+
     def _on_prompt_request(self, msg: str) -> None:
-        """Show a modal prompt; resume the runner once the operator clicks OK."""
-        QMessageBox.information(self, "Test Prompt", msg)
+        """Show a Pass/Fail prompt; resume the runner with the operator's choice."""
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Manual Check Required")
+        dialog.setText(msg)
+        dialog.setIcon(QMessageBox.Icon.Question)
+        pass_btn = dialog.addButton("Pass ✓", QMessageBox.ButtonRole.AcceptRole)
+        dialog.addButton("Fail ✗", QMessageBox.ButtonRole.RejectRole)
+        dialog.exec()
+        result = 1.0 if dialog.clickedButton() is pass_btn else 0.0
         if self.test_thread is not None:
-            self.test_thread.resume()
+            self.test_thread.resume(result)
 
     def _on_script_log(self, msg: str) -> None:
         """Append an operator-authored Log line to the trace, distinctly styled."""

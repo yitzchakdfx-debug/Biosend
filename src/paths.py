@@ -54,7 +54,13 @@ def user_tmp_path(*parts: str) -> Path:
     return _install_root().joinpath("tmp", *parts)
 
 
-_SEED_FILES = ("limits.json", "sequence.tst", "demo_system.tst")
+_SEED_FILES = (
+    "limits.json",
+    "sequence.tst",
+    "demo_system.tst",
+    "Automatic Power Supply Test.tst",
+    "Automatic Power Supply Test - Demo.tst",
+)
 _seeded = False
 
 
